@@ -6,6 +6,7 @@ import { approverClause, approverParams, getSettings, isAdmin, resolveRates } fr
 // Per typ: tabell, datumkolumn och hur raden kopplas till projekt.
 const KINDS = {
   time: {
+    bm: true,
     table: 'time_entries',
     date: 'work_date',
     from: `time_entries x
@@ -42,14 +43,14 @@ function parseIds(body) {
 }
 
 export function registerApprovals({ db, router }) {
-  const clause = (alias = 'x') => approverClause({ entry: alias });
+  const clause = (kind) => approverClause({ entry: 'x', bm: !!kind.bm });
 
   router.add('GET', '/api/approvals/count', {}, ({ user }) => {
     const params = approverParams(user);
     let count = 0;
     for (const k of Object.values(KINDS)) {
       count += db
-        .prepare(`SELECT COUNT(*) AS n FROM ${k.from} WHERE ${k.submitted} AND ${clause()}`)
+        .prepare(`SELECT COUNT(*) AS n FROM ${k.from} WHERE ${k.submitted} AND ${clause(k)}`)
         .get(params).n;
     }
     return { count };
@@ -74,7 +75,7 @@ export function registerApprovals({ db, router }) {
 
   router.add('GET', '/api/approvals', {}, ({ user }) => {
     const params = approverParams(user);
-    const where = (k) => `WHERE ${k.submitted} AND ${clause()}`;
+    const where = (k) => `WHERE ${k.submitted} AND ${clause(k)}`;
     return {
       time: db.prepare(`${LIST_SQL.time} ${where(KINDS.time)} ORDER BY u.name, x.work_date, p.code`).all(params),
       expenses: db.prepare(`${LIST_SQL.expenses} ${where(KINDS.expense)} ORDER BY u.name, x.expense_date`).all(params),
@@ -108,7 +109,7 @@ export function registerApprovals({ db, router }) {
       .prepare(
         `SELECT x.id, x.${kind.date} AS date${extra}
          FROM ${kind.from}
-         WHERE x.id IN (${placeholders}) AND ${kind.submitted} AND ${clause()}`,
+         WHERE x.id IN (${placeholders}) AND ${kind.submitted} AND ${clause(kind)}`,
       )
       .all(params);
     if (rows.length !== ids.length) {

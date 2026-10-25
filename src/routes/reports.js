@@ -82,7 +82,7 @@ export function registerReports({ db, router }) {
          LEFT JOIN customers c ON c.id = p.customer_id
          LEFT JOIN absence_types at ON at.id = te.absence_type_id
          WHERE te.work_date BETWEEN :from AND :to
-           AND (:isAdmin = 1 OR te.user_id = :actor OR p.manager_id = :actor OR u.manager_id = :actor)
+           AND (:isAdmin = 1 OR te.user_id = :actor OR p.manager_id = :actor OR u.manager_id = :actor OR u.bm_id = :actor)
            AND (:customer IS NULL OR c.id = :customer)
            AND (:project IS NULL OR p.id = :project)
            AND (:person IS NULL OR te.user_id = :person)
@@ -166,7 +166,8 @@ export function registerReports({ db, router }) {
   });
 
   /**
-   * Provision enligt reglerna under Admin → Provision. Administratörer ser alla, övriga bara sina egna.
+   * Provision enligt reglerna under Admin → Provision, bara på attesterad tid.
+   * Administratörer ser alla, övriga bara sina egna.
    * Perioder räknas hela (månad eller kvartal) och markeras som pågående tills de är slut.
    */
   router.add('GET', '/api/reports/commission', {}, ({ user, query, res }) => {
@@ -175,7 +176,7 @@ export function registerReports({ db, router }) {
     const rows = computeCommissions(db, {
       from,
       to,
-      approvedOnly: query.status !== 'all',
+      approvedOnly: true, // provision räknas bara på attesterad tid
       earnerId: isAdmin(user) ? (optId(query.earner_id, 'Mottagare') ?? null) : user.id,
     });
     if (query.format === 'csv') {

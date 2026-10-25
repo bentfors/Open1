@@ -5,7 +5,7 @@ import { hashPassword, checkPasswordPolicy, destroyUserSessions } from '../auth.
 import { isAdmin } from '../domain.js';
 
 const USER_COLUMNS = `u.id, u.email, u.name, u.role, u.category_id, c.name AS category_name, u.manager_id,
-  m.name AS manager_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.active, u.must_change_password`;
+  m.name AS manager_name, u.bm_id, bm.name AS bm_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.active, u.must_change_password`;
 
 const USER_SCHEMA = {
   email: f.email({ required: true, label: 'E-post' }),
@@ -13,6 +13,7 @@ const USER_SCHEMA = {
   role: f.oneOf(['admin', 'user'], { required: true, label: 'Roll' }),
   category_id: f.int({ nullable: true, min: 1, label: 'Kategori' }),
   manager_id: f.int({ nullable: true, min: 1, label: 'Chef' }),
+  bm_id: f.int({ nullable: true, min: 1, label: 'BM' }),
   cost_rate: f.num({ min: 0, max: 100000, label: 'Timkostnad' }),
   default_bill_rate: f.num({ min: 0, max: 100000, label: 'Standardpris' }),
   weekly_hours: f.num({ min: 0, max: 80, label: 'Arbetstid per vecka' }),
@@ -30,6 +31,9 @@ function assertRefs(db, data) {
   }
   if (data.manager_id != null && !db.prepare('SELECT 1 FROM users WHERE id = ?').get(data.manager_id)) {
     throw bad('Chefen finns inte.');
+  }
+  if (data.bm_id != null && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(data.bm_id)) {
+    throw bad('BM finns inte eller är inaktiv.');
   }
 }
 
@@ -56,6 +60,7 @@ export function registerUsers({ db, router }) {
          FROM users u
          LEFT JOIN categories c ON c.id = u.category_id
          LEFT JOIN users m ON m.id = u.manager_id
+         LEFT JOIN users bm ON bm.id = u.bm_id
          ORDER BY u.active DESC, u.name`,
       )
       .all(),
@@ -84,6 +89,7 @@ export function registerUsers({ db, router }) {
     const data = parse(body, USER_SCHEMA, { partial: true });
     assertRefs(db, data);
     if (data.manager_id === id) throw bad('En användare kan inte vara sin egen chef.');
+    if (data.bm_id === id) throw bad('En användare kan inte vara sin egen BM.');
     if (data.email && db.prepare('SELECT 1 FROM users WHERE email = ? AND id <> ?').get(data.email, id)) {
       throw conflict('E-postadressen används redan.');
     }

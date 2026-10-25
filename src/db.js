@@ -250,6 +250,10 @@ export const MIGRATIONS = [
     }
     db.exec('DROP TABLE commission_links');
   },
+
+  // 3: BM som attesterar alla en konsults tid.
+  `ALTER TABLE users ADD COLUMN bm_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+   CREATE INDEX users_bm ON users(bm_id);`,
 ];
 
 export function openDb(file) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { buildWorld, seedApprovedWeek, addTime } from './world.js';
 import { MIGRATIONS, migrate } from '../src/db.js';
+import { periods, quarterStart, quarterEnd } from '../src/dates.js';
 
 // Underlag: Annas mars 2025 från seedApprovedWeek, TB 6200 (se world.js).
 describe('provisionsregler', () => {
@@ -145,11 +146,13 @@ describe('provisionsregler', () => {
     assert.equal(row.commission, 276);
   });
 
-  test('bara godkänd tid räknas, om man inte ber om allt', async () => {
+  test('bara attesterad tid räknas, även om man ber om all tid', async () => {
     const open = addTime(w, { user_id: anna.id, date: '2025-03-10', activity_id: w.p1Activity, minutes: 60, status: 'open' });
+    const submitted = addTime(w, { user_id: anna.id, date: '2025-03-11', activity_id: w.p1Activity, minutes: 60, status: 'submitted' });
     assert.equal(rowsOf(await report('2025-03-01', '2025-03-31'), ids.bo)[0].commission, 620);
-    assert.equal(rowsOf(await report('2025-03-01', '2025-03-31', '&status=all'), ids.bo)[0].commission, 690, '(6200 + 700) × 10 %');
-    w.app.db.prepare('DELETE FROM time_entries WHERE id = ?').run(open);
+    assert.equal(rowsOf(await report('2025-03-01', '2025-03-31', '&status=all'), ids.bo)[0].commission, 620, 'status=all ändrar inget');
+    assert.equal(rowsOf(await report('2025-03-01', '2025-03-31'), ids.count)[0].consultants, 3, 'ej attesterad tid ger ingen konsult i uppdrag');
+    for (const id of [open, submitted]) w.app.db.prepare('DELETE FROM time_entries WHERE id = ?').run(id);
   });
 
   test('mottagare ser bara sina egna rader, ingen annans', async () => {
@@ -244,5 +247,31 @@ describe('migrering av gamla provisionskopplingar', () => {
     assert.deepEqual(db.prepare('SELECT user_id FROM commission_rule_sources WHERE rule_id = ?').all(rules[0].id).map((r) => r.user_id), [1]);
     assert.equal(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'commission_links'`).get(), undefined);
     assert.equal(db.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
+  });
+});
+
+describe('kalenderkvartal', () => {
+  test('Q1 är januari–mars, Q2 april–juni, Q3 juli–september, Q4 oktober–december', () => {
+    const q = periods('2025-01-01', '2025-12-31', 'quarter');
+    assert.deepEqual(
+      q.map((p) => [p.label, p.start, p.end]),
+      [
+        ['Q1 2025', '2025-01-01', '2025-03-31'],
+        ['Q2 2025', '2025-04-01', '2025-06-30'],
+        ['Q3 2025', '2025-07-01', '2025-09-30'],
+        ['Q4 2025', '2025-10-01', '2025-12-31'],
+      ],
+    );
+  });
+
+  test('en dag hamnar i rätt kvartal, även vid gränser och skottår', () => {
+    assert.deepEqual([quarterStart('2025-03-31'), quarterEnd('2025-03-31')], ['2025-01-01', '2025-03-31']);
+    assert.deepEqual([quarterStart('2025-04-01'), quarterEnd('2025-04-01')], ['2025-04-01', '2025-06-30']);
+    assert.deepEqual([quarterStart('2025-12-31'), quarterEnd('2025-12-31')], ['2025-10-01', '2025-12-31']);
+    assert.equal(quarterEnd('2024-02-29'), '2024-03-31');
+  });
+
+  test('ett intervall över årsskiftet ger kvartal från båda åren', () => {
+    assert.deepEqual(periods('2025-11-15', '2026-02-10', 'quarter').map((p) => p.label), ['Q4 2025', 'Q1 2026']);
   });
 });

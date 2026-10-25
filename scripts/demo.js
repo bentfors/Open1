@@ -52,9 +52,9 @@ if (fresh) {
   const am = await mk('am@demo.test', 'Axel Andersson', 'AM');
   const bm = await mk('bm@demo.test', 'Berit Björk', 'BM');
   const pl = await mk('pl@demo.test', 'Peter Projektledare', 'TA');
-  const k1 = await mk('erik@demo.test', 'Erik Expert', 'Konsult Expert', { manager_id: chef.id, cost_rate: 650 });
-  const k2 = await mk('nora@demo.test', 'Nora Next', 'Konsult Next', { manager_id: chef.id, cost_rate: 500 });
-  const k3 = await mk('tim@demo.test', 'Tim Talent', 'Konsult Talent', { manager_id: chef.id, cost_rate: 380 });
+  const k1 = await mk('erik@demo.test', 'Erik Expert', 'Konsult Expert', { manager_id: chef.id, bm_id: bm.id, cost_rate: 650 });
+  const k2 = await mk('nora@demo.test', 'Nora Next', 'Konsult Next', { manager_id: chef.id, bm_id: bm.id, cost_rate: 500 });
+  const k3 = await mk('tim@demo.test', 'Tim Talent', 'Konsult Talent', { manager_id: chef.id, bm_id: bm.id, cost_rate: 380 });
 
   const kund1 = (await admin.post('/api/customers', { name: 'Nordic Retail AB', org_no: '556123-4567', contact_name: 'Lena Lind', email: 'lena@nordicretail.example' })).id;
   const kund2 = (await admin.post('/api/customers', { name: 'Kommunen Exempel', org_no: '212000-1234' })).id;
@@ -126,5 +126,6 @@ console.log(`\nx-time demo: ${base}`);
 console.log(`  Admin:        admin@demo.test / ${PASSWORD}`);
 console.log(`  Konsult:      erik@demo.test, nora@demo.test, tim@demo.test`);
 console.log(`  AM / BM:      am@demo.test, bm@demo.test  (provision)`);
-console.log(`  Chef / PL:    chef@demo.test, pl@demo.test (attest)`);
+console.log(`  BM (attest):  bm@demo.test attesterar alla konsulters tid`);
+console.log(`  Chef / PL:    chef@demo.test, pl@demo.test`);
 console.log(`  Lösenord för alla: ${PASSWORD}\n`);

@@ -152,7 +152,7 @@ function showBasis(r) {
 
 async function marginReport(root) {
   const admin = isAdmin();
-  const filter = { ...monthRange(-1), status: 'approved' };
+  const filter = { ...monthRange(-1) };
   const result = h('div', { class: 'stack' });
 
   async function run() {
@@ -223,7 +223,7 @@ async function marginReport(root) {
         h(
           'p',
           { class: 'muted small' },
-          'Provision räknas per hel månad eller kvartal enligt reglerna, även om du väljer ett kortare intervall. Perioder som inte är slut markeras som pågående. ',
+          'Bara attesterad tid räknas. Kvartal är kalenderkvartal (Q1 = januari–mars). Provision räknas per hel månad eller kvartal enligt reglerna, även om du väljer ett kortare intervall, och perioder som inte är slut markeras som pågående. ',
           'TB = debiterbar intäkt − intern timkostnad, frånvaro räknas inte. ',
           com.cost_basis === 'billable' ? 'Kostnad räknas bara på debiterbara timmar. ' : 'Kostnad räknas på all projekttid, även ej debiterbar. ',
           'Fastprisprojekt räknas med sitt timpris som värde.',
@@ -246,7 +246,6 @@ async function marginReport(root) {
         'div',
         { class: 'filters' },
         periodFields(filter, run, [['Detta kvartal', quarterRange(0)], ['Förra kvartalet', quarterRange(-1)], ['I år', { from: `${year}-01-01`, to: `${year}-12-31` }]]),
-        select('m-status', 'Underlag', [{ value: 'approved', label: 'Bara godkänd tid' }, { value: 'all', label: 'All tid (förhandsvisning)' }], 'approved', (v) => (filter.status = v)),
         h('button', { class: 'btn primary', type: 'button', onclick: run }, 'Visa'),
         csv,
       ),

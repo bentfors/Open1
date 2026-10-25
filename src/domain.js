@@ -45,15 +45,18 @@ export function resolveRates(db, userId, activityId) {
  * SQL-villkor för "den här användaren får attestera raden".
  * Kräver namngivna parametrar :isAdmin och :actor, se approverParams.
  * - Admin får attestera allt.
- * - Projektledaren attesterar tid/utlägg/körning på sina projekt.
+ * - Har en anställd en BM attesterar BM all hens tid, oavsett projekt (bm = true, bara för tid).
+ *   Då attesterar varken projektledare eller chef.
+ * - Annars attesterar projektledaren tid/utlägg/körning på sina projekt.
  * - Allt utan projekt, eller på projekt utan projektledare, attesteras av den anställdes chef.
  * - Ingen attesterar sin egen rad, förutom admin.
  */
-export function approverClause({ entry, project = 'p', owner = 'u' }) {
-  return `(:isAdmin = 1 OR (${entry}.user_id <> :actor AND (
-      ${project}.manager_id = :actor
-      OR ((${project}.id IS NULL OR ${project}.manager_id IS NULL) AND ${owner}.manager_id = :actor)
-  )))`;
+export function approverClause({ entry, project = 'p', owner = 'u', bm = false }) {
+  const fallback = `(${project}.manager_id = :actor
+      OR ((${project}.id IS NULL OR ${project}.manager_id IS NULL) AND ${owner}.manager_id = :actor))`;
+  // Har den anställda en BM är det bara BM (och admin) som attesterar tiden, oavsett projekt.
+  const rule = bm ? `((${owner}.bm_id IS NOT NULL AND ${owner}.bm_id = :actor) OR (${owner}.bm_id IS NULL AND ${fallback}))` : fallback;
+  return `(:isAdmin = 1 OR (${entry}.user_id <> :actor AND ${rule}))`;
 }
 
 export const approverParams = (actor) => ({ isAdmin: isAdmin(actor) ? 1 : 0, actor: actor.id });

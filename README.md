@@ -47,7 +47,7 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 
 **Användare.** Roll (administratör eller användare), kategori (AM, BM, TA, Konsult Talent … redigerbar), chef, intern timkostnad, standardpris och arbetstid per vecka.
 
-**Attest.** Projektledaren attesterar tid, utlägg och körningar på sina projekt. Det som saknar projekt, eller ligger på projekt utan projektledare, attesteras av den anställdes chef. Ingen attesterar sig själv, utom administratör. Avslag kräver en anledning och går tillbaka till användaren. Administratör kan öppna godkänd tid igen (Attest → Godkända).
+**Attest.** Varje konsult har en **BM**, som attesterar all hens tid (projekttid och frånvaro) oavsett projekt. BM sätts på användaren under Admin → Användare. Har en användare ingen BM gäller den äldre ordningen: projektledaren attesterar tid på sina projekt, och det som saknar projektledare går till den anställdes chef. Utlägg och körningar attesteras alltid av projektledaren (annars chefen). Ingen attesterar sin egen rad, utom administratör. Avslag kräver en anledning och går tillbaka till användaren. Administratör kan öppna godkänd tid igen (Attest → Godkända).
 
 **Utlägg och körjournal.** Utlägg med kvitto (JPEG, PNG, WebP eller PDF, högst 5 MB) och körd sträcka. Båda kan vidarefaktureras till kund.
 
@@ -77,11 +77,11 @@ Kostnad     = timmar × användarens timkostnad
 
 - **Konsult i uppdrag** en månad: mer än *minsta antal timmar* (standard 0, alltså minst en minut) godkända debiterbara timmar den månaden. Du kan begränsa vilka kategorier som räknas.
 - **Trappa**: trappsteget gäller för hela TB:n, inte marginellt. Exempel: 0 → 4 %, 11 → 6 %, 21 → 8 %.
-- **Kvartal** summerar TB över hela kvartalet, så en dålig månad nettas mot en bra. Månadsregler räknas för sig.
+- **Kvartal** är kalenderkvartal: Q1 = januari–mars, Q2 = april–juni, Q3 = juli–september, Q4 = oktober–december. Kvartalsregler summerar TB över hela kvartalet, så en dålig månad nettas mot en bra. Månadsregler räknas för sig.
 - **Golv**: "Ingen negativ provision" ger 0 i stället för minus för perioden. Standard för nya regler.
 - Regler kan ha giltighetstid. Bara tid inom den räknas.
 - Perioder räknas alltid hela, även om du väljer ett kortare intervall i rapporten, och markeras som pågående tills de är slut.
-- Bara godkänd tid räknas, om man inte väljer "All tid" som förhandsvisning. Frånvaro räknas inte.
+- **Bara attesterad tid räknas**, både för TB och för antalet konsulter i uppdrag. Det finns ingen förhandsvisning på ej attesterad tid. Frånvaro räknas inte.
 - Under Admin → Inställningar väljer du om ej debiterbar projekttid (utbildning, internt) ska belasta TB. Standard är att den gör det.
 - Fastprisprojekt räknas med sitt timpris som värde i TB, men hamnar inte i fakturaunderlaget.
 
@@ -107,8 +107,8 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 | | Användare | Projektledare / chef | Mottagare av provision | Administratör |
 |---|---|---|---|---|
 | Egen tid, utlägg, körjournal | ✔ | ✔ | ✔ | ✔ |
-| Attestera | | på egna projekt och underställda | | allt |
-| Tidrapporter (timmar) | egen | + egna projekt och underställda | egen | allt |
+| Attestera tid | | som BM: sina konsulter. Annars egna projekt och underställda | | allt |
+| Tidrapporter (timmar) | egen | + egna konsulter (BM), projekt och underställda | egen | allt |
 | Priser, kostnader, TB | | | | ✔ |
 | Egen provision | | | ✔ | ✔ |
 | Användare, kunder, projekt, provisionsregler | | | | ✔ |
@@ -130,7 +130,7 @@ Projektledare ser alltså timmar men inte pengar. Det är ett medvetet val för 
 
 - Databasen är en SQLite-fil i WAL-läge. Säkerhetskopiera med `sqlite3 data/x-time.sqlite ".backup 'backup.sqlite'"` och kopiera `data/receipts/` med.
 - Inloggningsspärren ligger i minnet och nollställs vid omstart. Kör en enda instans.
-- Tester: `npm test` (76 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
+- Tester: `npm test` (86 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
 
 ## Begränsningar och antaganden
 
