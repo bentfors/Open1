@@ -1,4 +1,4 @@
-import { bad, conflict, notFound } from '../http.js';
+import { bad, conflict, forbidden, notFound } from '../http.js';
 import { f, parse } from '../validate.js';
 import { insertRow, updateRow, tx } from '../db.js';
 import { hashPassword, checkPasswordPolicy, destroyUserSessions } from '../auth.js';
@@ -38,6 +38,23 @@ function assertRefs(db, data) {
   }
 }
 
+// Ekonomi-superuser får hantera användare, men inget som ger någon högre behörighet än hen själv har.
+// Utan de här spärrarna vore nivån en omväg till administratör.
+const ESCALATION = 'Bara en administratör kan ändra roll och ekonomibehörighet.';
+const ADMIN_ACCOUNT = 'Bara en administratör kan ändra en administratörs konto.';
+const SELF_APPROVER = 'Du kan inte utse dig själv till någons BM eller chef.';
+
+function assertMayChange(actor, existing, data) {
+  if (isAdmin(actor)) return;
+  if (existing.role === 'admin') throw forbidden(ADMIN_ACCOUNT);
+  if ((data.role !== undefined && data.role !== existing.role) || (data.finance !== undefined && data.finance !== existing.finance)) {
+    throw forbidden(ESCALATION);
+  }
+  for (const key of ['bm_id', 'manager_id']) {
+    if (data[key] === actor.id && existing[key] !== actor.id) throw forbidden(SELF_APPROVER);
+  }
+}
+
 function activeAdminCount(db) {
   return db.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1`).get().n;
 }
@@ -67,8 +84,11 @@ export function registerUsers({ db, router }) {
       .all(),
   );
 
-  router.add('POST', '/api/users', { auth: 'admin' }, async ({ body }) => {
-    const data = parse(body, USER_SCHEMA);
+  router.add('POST', '/api/users', { auth: 'finance_super' }, async ({ body, user }) => {
+    const admin = isAdmin(user);
+    if (!admin && ((body.role ?? 'user') !== 'user' || (body.finance ?? 0) !== 0)) throw forbidden(ESCALATION);
+    const data = parse(admin ? body : { ...body, role: 'user' }, USER_SCHEMA);
+    if (!admin && [data.bm_id, data.manager_id].includes(user.id)) throw forbidden(SELF_APPROVER);
     assertRefs(db, data);
     const problem = checkPasswordPolicy(body.password);
     if (problem) throw bad(problem);
@@ -83,11 +103,12 @@ export function registerUsers({ db, router }) {
     return { id };
   });
 
-  router.add('PATCH', '/api/users/:id', { auth: 'admin' }, ({ params, body, user }) => {
+  router.add('PATCH', '/api/users/:id', { auth: 'finance_super' }, ({ params, body, user }) => {
     const id = Number(params.id);
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!existing) throw notFound('Användaren finns inte.');
     const data = parse(body, USER_SCHEMA, { partial: true });
+    assertMayChange(user, existing, data);
     assertRefs(db, data);
     if (data.manager_id === id) throw bad('En användare kan inte vara sin egen chef.');
     if (data.bm_id === id) throw bad('En användare kan inte vara sin egen BM.');
@@ -106,10 +127,12 @@ export function registerUsers({ db, router }) {
     return { ok: true };
   });
 
-  // Administratören sätter ett tillfälligt lösenord. Användaren måste byta vid nästa inloggning.
-  router.add('POST', '/api/users/:id/password', { auth: 'admin' }, async ({ params, body }) => {
+  // Administratören (eller ekonomi-superuser) sätter ett tillfälligt lösenord. Användaren måste byta vid nästa inloggning.
+  router.add('POST', '/api/users/:id/password', { auth: 'finance_super' }, async ({ params, body, user }) => {
     const id = Number(params.id);
-    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) throw notFound('Användaren finns inte.');
+    const existing = db.prepare('SELECT role FROM users WHERE id = ?').get(id);
+    if (!existing) throw notFound('Användaren finns inte.');
+    assertMayChange(user, existing, {});
     const problem = checkPasswordPolicy(body.password);
     if (problem) throw bad(problem);
     const hash = await hashPassword(body.password);

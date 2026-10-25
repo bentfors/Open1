@@ -57,11 +57,16 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 | Upplupet och tidrapporter med pengar för alla | ✔ | ✔ |
 | TB per konsult och provisionsrapporten för alla mottagare (läsa, inte ändra regler) | | ✔ |
 | Läsa hela administrationen (användare, kunder, projekt med team, avtal, provisionsregler, kategorier, inställningar) och allas statistik och prognos | | ✔ |
+| Skapa och ändra användare och sätta lösenord (inte roll, ekonomibehörighet eller administratörers konton) | | ✔ |
 | Avskriva och ångra avskrivning | | ✔ |
 | Ångra ett skapat fakturaunderlag | | ✔ |
 | Låsa perioder (Fakturering → Periodlåsning) | | ✔ |
 
-Gränsen går vid sådant som är svårt att ta tillbaka eller som ändrar vad andra får göra. Den är samlad i `isFinance` och `isFinanceSuper` i `src/domain.js` och i vilken rutt som kräver vilken nivå, så den går att flytta. Superuser ser hela administrationen men kan bara ändra periodlåsningen, allt annat är administratörens. I adminvyerna saknas skrivknapparna för superusern, och servern nekar skrivningar oavsett. Administratörer har alltid båda nivåerna.
+Gränsen går vid sådant som är svårt att ta tillbaka eller som ändrar vad andra får göra. Den är samlad i `isFinance` och `isFinanceSuper` i `src/domain.js` och i vilken rutt som kräver vilken nivå, så den går att flytta. Superuser ser hela administrationen och kan skapa och ändra användare (namn, kategori, BM, chef, kostnad, pris, arbetstid, aktiv, lösenord). Bland inställningarna ändrar hen bara periodlåsningen, och kunder, projekt, avtal och provisionsregler är administratörens. Skrivknapparna saknas i vyerna och servern nekar skrivningarna oavsett.
+
+Det som en superuser **inte** kan göra med användare, eftersom det vore en väg till administratörsrättigheter: ändra någons roll eller ekonomibehörighet (sin egen inklusive), skapa administratörer eller ekonomianvändare, ändra eller återställa lösenord för en administratör, eller utse sig själv till någons BM eller chef.
+
+Spärrarna är inte vattentäta. Den som kan sätta lösenord kan logga in som den personen, och den som kan sätta BM kan peka ut en annan person hen kontrollerar. Det betyder att en superuser i praktiken kan attestera i någon annans namn. Det är en förtroendefråga, inte något systemet kan förhindra. Om det är viktigt att kunna se efteråt vem som ändrat vad behövs en ändringslogg, som inte finns än. Administratörer har alltid båda nivåerna.
 
 **Utlägg och körjournal.** Utlägg med kvitto (JPEG, PNG, WebP eller PDF, högst 5 MB) och körd sträcka. Båda kan vidarefaktureras till kund.
 
@@ -168,7 +173,8 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 | TB per konsult och provisionsrapport | | | egen provision | | ✔ | ✔ |
 | Statistik och prognos | | sina konsulter | egen | | alla (läsa) | alla |
 | Läsa användare, avtal, provisionsregler, projektens team och inställningar | | | | | ✔ | ✔ |
-| Ändra användare, kunder, projekt, avtal, provisionsregler, övriga inställningar | | | | | | ✔ |
+| Ändra kunder, projekt, avtal, provisionsregler, övriga inställningar | | | | | | ✔ |
+| Ändra användare | | | | | ✔, utom roll, ekonomibehörighet och administratörer | ✔ |
 
 Ekonomi ser kundens pengar men inte provisioner. Det gör bara ekonomi-superuser och administratörer. Projektledare och BM ser timmar men inte pengar.
 

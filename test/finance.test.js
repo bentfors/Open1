@@ -161,7 +161,7 @@ describe('ekonomiadministratörer, två nivåer', () => {
     assert.equal((await basic.client.get(`/api/stats?earner_id=${bo.id}`)).json.earner.id, basic.id, 'statistiken blir den egna');
   });
 
-  test('superusern ser allt men ändrar inget: läsrätt till administrationen och allas statistik', async () => {
+  test('superusern ser allt och ändrar bara användare: läsrätt till resten av administrationen och allas statistik', async () => {
     const READ = ['/api/users', '/api/employments', '/api/assignments', '/api/contracts/warnings', '/api/commission-rules', '/api/stats/people', `/api/projects/${w.p1}`, '/api/customers', '/api/projects'];
     for (const url of READ) {
       assert.equal((await sup.client.get(url)).status, 200, `superuser läser ${url}`);
@@ -173,8 +173,6 @@ describe('ekonomiadministratörer, två nivåer', () => {
 
     // Allt som skriver är fortfarande administratörens.
     const WRITE = [
-      ['post', '/api/users', { email: 'x@t.se', name: 'X', password: 'ett-langt-losenord' }],
-      ['patch', `/api/users/${anna.id}`, { name: 'Ändrad' }],
       ['post', '/api/customers', { name: 'Ny kund' }],
       ['post', '/api/commission-rules', { earner_id: bo.id, kind: 'tb_percent', period: 'month', percent: 5, source_ids: [anna.id] }],
       ['post', '/api/employments', { user_id: anna.id, type: 'permanent', start_date: '2030-01-01' }],
@@ -183,6 +181,48 @@ describe('ekonomiadministratörer, två nivåer', () => {
     ];
     for (const [method, url, body] of WRITE) {
       assert.equal((await sup.client[method](url, body)).status, 403, `${method} ${url}`);
+    }
+  });
+
+  test('superusern hanterar användare, men kan inte ge någon (eller sig själv) mer behörighet', async () => {
+    const adminId = (await sup.client.get('/api/users')).json.find((u) => u.role === 'admin').id;
+    const status = async (call) => (await call).status;
+
+    // Skapa och ändra vanliga användare, inklusive lösenord, kostnad och BM.
+    const created = await sup.client.post('/api/users', { email: 'ny@t.se', name: 'Ny Person', role: 'user', password: 'ett-langt-losenord', cost_rate: 400 });
+    assert.equal(created.status, 200);
+    const row = (id) => admin.get('/api/users').then((r) => r.json.find((u) => u.id === id));
+    const fresh = created.json.id;
+    assert.deepEqual([(await row(fresh)).role, (await row(fresh)).finance, (await row(fresh)).must_change_password], ['user', 0, 1]);
+    assert.equal(await status(sup.client.patch(`/api/users/${fresh}`, { name: 'Ny K', cost_rate: 700, bm_id: cia.id })), 200);
+    assert.deepEqual([(await row(fresh)).cost_rate, (await row(fresh)).bm_id], [700, cia.id]);
+    assert.equal(await status(sup.client.post(`/api/users/${fresh}/password`, { password: 'nytt-tillfalligt-1' })), 200);
+    // Oförändrade värden för roll och nivå är inget försök att ändra dem.
+    assert.equal(await status(sup.client.patch(`/api/users/${fresh}`, { role: 'user', finance: 0 })), 200);
+
+    // Inget som ger högre behörighet.
+    assert.equal(await status(sup.client.post('/api/users', { email: 'a2@t.se', name: 'A', role: 'admin', password: 'ett-langt-losenord' })), 403);
+    assert.equal(await status(sup.client.post('/api/users', { email: 'f2@t.se', name: 'F', role: 'user', finance: 1, password: 'ett-langt-losenord' })), 403);
+    assert.equal(await status(sup.client.patch(`/api/users/${anna.id}`, { role: 'admin' })), 403);
+    assert.equal(await status(sup.client.patch(`/api/users/${anna.id}`, { finance: 2 })), 403);
+    assert.equal(await status(sup.client.patch(`/api/users/${sup.id}`, { role: 'admin' })), 403, 'inte heller sitt eget konto');
+    assert.equal(await status(sup.client.patch(`/api/users/${sup.id}`, { finance: 0 })), 403);
+
+    // Administratörers konton är administratörens.
+    assert.equal(await status(sup.client.patch(`/api/users/${adminId}`, { name: 'Övertagen' })), 403);
+    assert.equal(await status(sup.client.patch(`/api/users/${adminId}`, { active: false })), 403);
+    assert.equal(await status(sup.client.post(`/api/users/${adminId}/password`, { password: 'overtaget-losen-1' })), 403);
+
+    // Man utser inte sig själv till attestant.
+    assert.equal(await status(sup.client.patch(`/api/users/${anna.id}`, { bm_id: sup.id })), 403);
+    assert.equal(await status(sup.client.patch(`/api/users/${anna.id}`, { manager_id: sup.id })), 403);
+    assert.equal((await row(anna.id)).bm_id, cia.id, 'Annas BM är kvar');
+
+    // Ekonomi på lägre nivå och vanliga användare når ingenting av detta.
+    for (const u of [basic, anna]) {
+      assert.equal(await status(u.client.post('/api/users', { email: 'q@t.se', name: 'Q', role: 'user', password: 'ett-langt-losenord' })), 403);
+      assert.equal(await status(u.client.patch(`/api/users/${eve.id}`, { name: 'Q' })), 403);
+      assert.equal(await status(u.client.post(`/api/users/${eve.id}/password`, { password: 'ett-langt-losenord' })), 403);
     }
   });
 

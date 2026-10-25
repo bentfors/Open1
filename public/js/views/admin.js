@@ -13,22 +13,25 @@ const TABS = [
   ['installningar', 'Inställningar'],
 ];
 
-// Ekonomi-superuser ser hela administrationen men kan inte ändra något: knapparna som skriver finns inte.
+// Ekonomi-superuser ser hela administrationen men ändrar bara användare. Övriga skrivknappar finns inte för hen,
+// och servern nekar skrivningarna oavsett.
 const canWrite = () => isAdmin();
+// Superusern får inte röra administratörers konton. Roll och ekonomibehörighet är också bara administratörens.
+const canEditUser = (u) => isAdmin() || u.role !== 'admin';
 
 const personLabel = (u) => (u.category_name ? `${u.name} (${u.category_name})` : u.name);
 
 // Gemensam ram för en listvy: rubrik, "Ny"-knapp och en tabell som kan laddas om.
-function listSection(root, { title, intro, newLabel, onNew }) {
+function listSection(root, { title, intro, newLabel, onNew, canNew = canWrite() }) {
   const box = h('div', { class: 'card flush' });
   add(root, 
-    h('div', { class: 'row between' }, h('div', {}, h('h2', {}, title), intro ? h('p', { class: 'muted' }, intro) : null), newLabel && canWrite() ? h('button', { class: 'btn primary', type: 'button', onclick: onNew }, newLabel) : null),
+    h('div', { class: 'row between' }, h('div', {}, h('h2', {}, title), intro ? h('p', { class: 'muted' }, intro) : null), newLabel && canNew ? h('button', { class: 'btn primary', type: 'button', onclick: onNew }, newLabel) : null),
     box,
   );
   return box;
 }
 
-const actionBtn = (label, onclick, cls = '') => (canWrite() ? h('button', { class: `btn sm ${cls}`, type: 'button', onclick }, label) : null);
+const actionBtn = (label, onclick, cls = '', allowed = canWrite()) => (allowed ? h('button', { class: `btn sm ${cls}`, type: 'button', onclick }, label) : null);
 
 async function guarded(fn) {
   try {
@@ -86,7 +89,7 @@ async function usersTab(root) {
           { label: 'Timkostnad', num: true, render: (u) => fmtMoney(u.cost_rate) },
           { label: 'Std-pris', num: true, render: (u) => (u.default_bill_rate ? fmtMoney(u.default_bill_rate) : '') },
           { label: 'Tim/vecka', num: true, render: (u) => fmtNum(u.weekly_hours) },
-          { label: '', class: 'actions', render: (u) => [actionBtn('Ändra', () => edit(u)), ' ', actionBtn('Lösenord', () => resetPassword(u))] },
+          { label: '', class: 'actions', render: (u) => (canEditUser(u) ? [actionBtn('Ändra', () => edit(u), '', true), ' ', actionBtn('Lösenord', () => resetPassword(u), '', true)] : null) },
         ],
       }),
     );
@@ -97,24 +100,28 @@ async function usersTab(root) {
     const fields = [
       { name: 'name', label: 'Namn', required: true, maxlength: 100 },
       { name: 'email', label: 'E-post', type: 'email', required: true },
-      { name: 'role', label: 'Roll', type: 'select', options: [{ value: 'user', label: 'Användare' }, { value: 'admin', label: 'Administratör' }] },
+      ...(isAdmin() ? [{ name: 'role', label: 'Roll', type: 'select', options: [{ value: 'user', label: 'Användare' }, { value: 'admin', label: 'Administratör' }] }] : []),
       { name: 'category_id', label: 'Kategori', type: 'select', options: optionList(categories, { blank: '(ingen)' }) },
       { name: 'bm_id', label: 'BM / konsultchef (attesterar allt som rapporteras)', type: 'select', options: optionList(users.filter((u) => (u.active || u.id === existing?.bm_id) && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }), hint: 'Har användaren en BM är det bara BM som attesterar tid, utlägg och körningar. Utan BM attesterar projektledaren.' },
       { name: 'manager_id', label: 'Chef (attesterar när BM och projektledare saknas)', type: 'select', options: optionList(users.filter((u) => u.active && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }) },
       { name: 'weekly_hours', label: 'Arbetstid per vecka (tim)', type: 'number', step: '0.5', min: '0', max: '80' },
-      { name: 'cost_rate', label: 'Intern timkostnad (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används för TB. Syns bara för administratörer.' },
+      { name: 'cost_rate', label: 'Intern timkostnad (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används för TB. Syns bara för administratörer och ekonomi-superuser.' },
       { name: 'default_bill_rate', label: 'Standard timpris (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används när varken projekt, aktivitet eller medlem har eget pris.' },
-      {
-        name: 'finance',
-        label: 'Ekonomibehörighet',
-        type: 'select',
-        options: [
-          { value: 0, label: 'Ingen' },
-          { value: 1, label: 'Ekonomi: skapar fakturaunderlag, ser upplupet och ekonomirapporter' },
-          { value: 2, label: 'Ekonomi-superuser: dessutom avskriver, ångrar underlag och låser perioder' },
-        ],
-        full: true,
-      },
+      ...(isAdmin()
+        ? [
+            {
+              name: 'finance',
+              label: 'Ekonomibehörighet',
+              type: 'select',
+              options: [
+                { value: 0, label: 'Ingen' },
+                { value: 1, label: 'Ekonomi: skapar fakturaunderlag, ser upplupet och ekonomirapporter' },
+                { value: 2, label: 'Ekonomi-superuser: dessutom avskriver, ångrar underlag och låser perioder' },
+              ],
+              full: true,
+            },
+          ]
+        : []),
       ...(existing ? [{ name: 'active', label: 'Aktiv', type: 'checkbox' }] : [{ name: 'password', label: 'Tillfälligt lösenord', type: 'password', required: true, hint: 'Minst 10 tecken. Användaren måste byta vid första inloggning.', full: true }]),
     ];
     editDialog({
@@ -122,7 +129,8 @@ async function usersTab(root) {
       fields,
       values: existing ? { ...existing, active: !!existing.active } : { role: 'user', weekly_hours: 40, cost_rate: 0, default_bill_rate: 0, finance: 0 },
       onSave: async (v) => {
-        const body = { ...v, cost_rate: v.cost_rate ?? 0, default_bill_rate: v.default_bill_rate ?? 0, weekly_hours: v.weekly_hours ?? 40, finance: v.finance ?? 0 };
+        const body = { ...v, cost_rate: v.cost_rate ?? 0, default_bill_rate: v.default_bill_rate ?? 0, weekly_hours: v.weekly_hours ?? 40 };
+        if (isAdmin()) body.finance = v.finance ?? 0;
         if (existing) await patch(`/api/users/${existing.id}`, body);
         else await post('/api/users', body);
         toast('Användaren är sparad.', 'ok');
@@ -144,7 +152,7 @@ async function usersTab(root) {
     });
   }
 
-  box = listSection(root, { title: 'Användare', intro: 'Konton, roller, kategorier och interna kostnader.', newLabel: '+ Ny användare', onNew: () => guarded(() => edit(null)) });
+  box = listSection(root, { title: 'Användare', intro: 'Konton, roller, kategorier och interna kostnader.', newLabel: '+ Ny användare', onNew: () => guarded(() => edit(null)), canNew: true });
   await reload();
 }
 
@@ -819,7 +827,7 @@ export async function renderAdmin(root, params) {
   const active = TABS.some((t) => t[0] === params[0]) ? params[0] : 'anvandare';
   add(root, 
     h('h1', {}, 'Administration'),
-    canWrite() ? null : h('p', { class: 'muted' }, 'Du har läsrätt här som ekonomi-superuser. Ändringar görs av en administratör.'),
+    canWrite() ? null : h('p', { class: 'muted' }, 'Som ekonomi-superuser hanterar du användare, men inte administratörer, roller eller ekonomibehörighet. Resten av administrationen har du läsrätt till.'),
     h('div', { class: 'subnav' }, TABS.map(([id, label]) => h('a', { href: `#/admin/${id}`, 'aria-current': id === active ? 'page' : null }, label))),
   );
   const body = h('div', { class: 'stack' });
