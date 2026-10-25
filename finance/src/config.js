@@ -20,6 +20,8 @@ export const config = {
   // Registrering är på som standard. Slå av med ALLOW_SIGNUP=0 när alla som ska ha konto har det.
   allowSignup: env.ALLOW_SIGNUP !== '0',
   // 'yahoo' hämtar kurser från Yahoo Finances ofullständigt dokumenterade API. 'none' = bara manuella kurser.
+  // Rådgivarfunktionen (samtycke, rådgivarvy). Stäng av med ADVISOR_ENABLED=0.
+  advisorEnabled: env.ADVISOR_ENABLED !== '0',
   priceProvider: env.PRICE_PROVIDER || 'yahoo',
   priceTtlMinutes: Number(env.PRICE_TTL_MINUTES || 15),
 };

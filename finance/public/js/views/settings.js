@@ -6,6 +6,7 @@ const KIND = { income: 'Inkomst', expense: 'Utgift', transfer: 'Överföring' };
 
 export async function renderSettings(root) {
   const household = h('div');
+  const advisors = h('div');
   const cats = h('div');
   const rules = h('div');
   const pw = passwordCard();
@@ -14,6 +15,8 @@ export async function renderSettings(root) {
     h('h1', {}, 'Inställningar'),
     h('h2', {}, 'Hushåll och antaganden'),
     household,
+    h('h2', { class: 'mt-l' }, 'Rådgivare'),
+    advisors,
     h('h2', { class: 'mt-l' }, 'Kategorier'),
     cats,
     h('h2', { class: 'mt-l' }, 'Regler för automatisk kategorisering'),
@@ -132,7 +135,72 @@ export async function renderSettings(root) {
     location.reload();
   }
 
-  await Promise.all([loadHousehold(), loadCats(), loadRules()]);
+  let shownCode = null; // koden måste överleva omritningen av listan
+  const GRANT_STATE = {
+    invitation: ['Kod skapad, ej inlöst', 'warn'],
+    code_expired: ['Koden har gått ut', 'rejected'],
+    awaiting_approval: ['Väntar på godkännande', 'warn'],
+    active: ['Aktivt', 'approved'],
+    expired: ['Har gått ut', 'rejected'],
+    revoked: ['Återkallat', 'rejected'],
+  };
+
+  async function loadAdvisors() {
+    const data = await get('/api/advisors');
+    if (!data.enabled) return setKids(advisors, h('p', { class: 'muted' }, 'Rådgivarfunktionen är avstängd på den här servern.'));
+    const level = h('select', { id: 'adv-level' }, h('option', { value: 'summary' }, 'Sammanfattning: nyckeltal, rapporter, budget, mål och scenarier'), h('option', { value: 'detail' }, 'Detaljer: dessutom enskilda transaktioner'));
+    const months = h('select', { id: 'adv-months' }, [3, 6, 12, 24].map((m) => h('option', { value: m, selected: m === 12 }, `${m} månader`)));
+    const code = h('div');
+    if (shownCode) setKids(code, shownCode);
+    setKids(
+      advisors,
+      h('div', { class: 'card' },
+        h('p', {}, 'Du bestämmer vem som får titta på din ekonomi, hur mycket och hur länge. Rådgivaren får bara läsa. Privata konton och deras transaktioner och innehav visas aldrig. Alla i hushållet måste godkänna, vem som helst kan återkalla, och allt rådgivaren öppnar syns i loggen nedan.'),
+        h('div', { class: 'form-grid' }, h('div', { class: 'field' }, h('label', { for: 'adv-level' }, 'Vad får rådgivaren se?'), level), h('div', { class: 'field' }, h('label', { for: 'adv-months' }, 'Hur länge?'), months)),
+        h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+          try {
+            const r = await post('/api/advisors', { level: level.value, months: Number(months.value) });
+            shownCode = h('div', { class: 'alert' }, `Ge rådgivaren den här koden (visas bara nu, gäller i ${r.code_days} dagar): `, h('strong', {}, r.code), '. Rådgivaren skapar ett eget konto och löser in den under Inställningar.');
+            loadAdvisors();
+          } catch (e) {
+            toast(e.message, 'error');
+          }
+        } }, 'Skapa kod för rådgivare'),
+        code),
+      data.items.length ? h('div', { class: 'card flush mt-m' }, dataTable({
+        rows: data.items,
+        columns: [
+          { label: 'Rådgivare', render: (g) => g.advisor || h('span', { class: 'muted' }, 'inte inlöst') },
+          { label: 'Nivå', render: (g) => (g.level === 'detail' ? 'Detaljer' : 'Sammanfattning') },
+          { label: 'Status', render: (g) => h('div', {}, h('span', { class: `chip ${GRANT_STATE[g.state][1]}` }, GRANT_STATE[g.state][0]), g.approvals.missing.length && !['revoked', 'expired', 'code_expired'].includes(g.state) ? h('div', { class: 'small muted' }, `Saknar godkännande från ${g.approvals.missing.map((m) => m.name).join(', ')}`) : null) },
+          { label: 'Gäller till', render: (g) => g.expires_at.slice(0, 10) },
+          { label: '', class: 'actions', render: (g) => h('div', { class: 'row' },
+            !g.i_approved && !['revoked', 'expired', 'code_expired'].includes(g.state) ? h('button', { class: 'btn sm primary', type: 'button', onclick: async () => { await post(`/api/advisors/${g.id}/approve`); toast('Godkänt.', 'ok'); loadAdvisors(); } }, 'Godkänn') : null,
+            !['revoked', 'expired', 'code_expired'].includes(g.state) ? h('button', { class: 'btn sm danger', type: 'button', onclick: async () => { if (await confirmDialog('Rådgivaren förlorar åtkomsten direkt. Det går inte att ångra, men du kan ge ett nytt samtycke.', { danger: true, confirmLabel: 'Återkalla' })) { await post(`/api/advisors/${g.id}/revoke`); loadAdvisors(); } } }, 'Återkalla') : null) },
+        ],
+      })) : null,
+      h('h3', { class: 'mt-m' }, 'Åtkomstlogg'),
+      h('div', { class: 'card flush' }, dataTable({ empty: 'Ingen rådgivare har öppnat något.', rows: data.log, columns: [{ label: 'Tid (UTC)', class: 'nowrap', render: (l) => l.at }, { label: 'Rådgivare', render: (l) => l.advisor }, { label: 'Öppnade', render: (l) => l.action }] })),
+      h('div', { class: 'card mt-m' },
+        h('h3', {}, 'Är du rådgivare?'),
+        h('p', { class: 'muted small' }, 'Lös in en kod du fått av en kund för att se kundens ekonomi (med kundens samtycke). Menyvalet Rådgivare dyker upp.'),
+        (() => {
+          const input = h('input', { id: 'redeem-code', type: 'text', autocomplete: 'off', placeholder: 'Kod från kunden' });
+          return h('div', { class: 'row' }, input, h('button', { class: 'btn', type: 'button', onclick: async () => {
+            try {
+              await post('/api/advisor/redeem', { code: input.value.trim() });
+              location.hash = '#/radgivare';
+              location.reload();
+            } catch (e) {
+              toast(e.message, 'error');
+            }
+          } }, 'Lös in'));
+        })()),
+      h('p', { class: 'muted small' }, 'Rådgivarens egna anteckningar om dig ser du inte. De tillhör rådgivaren, som är ansvarig för dem. Radera hela kontot här nedan om du vill att din data ska försvinna.'),
+    );
+  }
+
+  await Promise.all([loadHousehold(), loadAdvisors(), loadCats(), loadRules()]);
 }
 
 function passwordCard() {

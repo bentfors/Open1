@@ -83,6 +83,29 @@ export function incomeStatement(db, sc, from, to) {
   };
 }
 
+/** Balansräkning per idag för det scopet ser: kontosaldon och innehav till aktuell kurs. */
+export async function balanceSheet(db, prices, sc, { force = false } = {}) {
+  const accounts = accountBalances(db, sc, today());
+  const holdings = await valueAll(prices, db.prepare(`SELECT h.* FROM holdings h WHERE ${sc.holdings('h')} ORDER BY h.name`).all(), { force });
+  const assets = [];
+  const liabilities = [];
+  for (const a of accounts) {
+    const line = { type: 'account', id: a.id, name: a.name, kind: a.kind, kind_label: ACCOUNT_KINDS[a.kind] };
+    if (LIABILITY_KINDS.has(a.kind) || a.balance < 0) liabilities.push({ ...line, amount: -a.balance });
+    else assets.push({ ...line, amount: a.balance });
+  }
+  const unpriced = [];
+  for (const h of holdings) {
+    if (h.value === null) {
+      unpriced.push({ id: h.id, name: h.name, reason: h.reason });
+      continue;
+    }
+    assets.push({ type: 'holding', id: h.id, name: h.name, kind: 'holding', kind_label: 'Värdepapper', amount: h.value, stale: !!h.stale, as_of: h.as_of });
+  }
+  const sum = (list) => list.reduce((n, l) => n + l.amount, 0);
+  return { date: today(), assets, liabilities, total_assets: sum(assets), total_liabilities: sum(liabilities), equity: sum(assets) - sum(liabilities), unpriced };
+}
+
 export function registerReports({ db, router, prices }) {
   router.add('GET', '/api/reports/income', {}, ({ user, query }) => {
     const from = isoDate(query.from, 'Från');
@@ -92,51 +115,19 @@ export function registerReports({ db, router, prices }) {
     return incomeStatement(db, scopeOf(user, query.scope), from, to);
   });
 
-  // Balansräkning per idag: kontosaldon (transaktioner till och med idag) och innehav till aktuell kurs.
   router.add('GET', '/api/reports/balance', {}, async ({ user, query }) => {
-    const date = today();
     const sc = scopeOf(user, query.scope);
-    const accounts = accountBalances(db, sc, date);
-    const holdings = await valueAll(prices, db.prepare(`SELECT h.* FROM holdings h WHERE ${sc.holdings('h')} ORDER BY h.name`).all(), { force: query.refresh === '1' });
-
-    const assets = [];
-    const liabilities = [];
-    for (const a of accounts) {
-      const line = { type: 'account', id: a.id, name: a.name, kind: a.kind, kind_label: ACCOUNT_KINDS[a.kind] };
-      if (LIABILITY_KINDS.has(a.kind) || a.balance < 0) liabilities.push({ ...line, amount: -a.balance });
-      else assets.push({ ...line, amount: a.balance });
-    }
-    const unpriced = [];
-    for (const h of holdings) {
-      if (h.value === null) {
-        unpriced.push({ id: h.id, name: h.name, reason: h.reason });
-        continue;
-      }
-      assets.push({ type: 'holding', id: h.id, name: h.name, kind: 'holding', kind_label: 'Värdepapper', amount: h.value, stale: !!h.stale, as_of: h.as_of });
-    }
-    const sum = (list) => list.reduce((n, l) => n + l.amount, 0);
-    const totalAssets = sum(assets);
-    const totalLiabilities = sum(liabilities);
+    const sheet = await balanceSheet(db, prices, sc, { force: query.refresh === '1' });
 
     // En ögonblicksbild per dag ger utvecklingen över tid. Får bara skrivas med fullständig värdering,
     // annars ser ett innehav utan kurs ut som en förlust.
-    if (!unpriced.length) {
+    if (!sheet.unpriced.length) {
       db.prepare(
         `INSERT INTO net_worth_snapshots (user_id, scope, date, assets, liabilities) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(user_id, scope, date) DO UPDATE SET assets = excluded.assets, liabilities = excluded.liabilities`,
-      ).run(user.id, sc.mode, date, totalAssets, totalLiabilities);
+      ).run(user.id, sc.mode, sheet.date, sheet.total_assets, sheet.total_liabilities);
     }
     const history = db.prepare('SELECT date, assets, liabilities FROM net_worth_snapshots WHERE user_id = ? AND scope = ? ORDER BY date').all(user.id, sc.mode);
-
-    return {
-      date,
-      assets,
-      liabilities,
-      total_assets: totalAssets,
-      total_liabilities: totalLiabilities,
-      equity: totalAssets - totalLiabilities,
-      unpriced,
-      history,
-    };
+    return { ...sheet, history };
   });
 }

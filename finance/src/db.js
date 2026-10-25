@@ -203,6 +203,56 @@ export const MIGRATIONS = [
       DROP TABLE net_worth_snapshots_old;
     `);
   },
+
+  // 3: rådgivare med samtycke, anteckningar och åtkomstlogg.
+  `
+  -- Kunden (ett hushåll) ger en rådgivare läsrätt. Koden visas en gång och löser in ett samtycke.
+  -- Samtycket gäller först när rådgivaren löst in koden OCH alla nuvarande hushållsmedlemmar godkänt det.
+  CREATE TABLE advisor_grants (
+    id           INTEGER PRIMARY KEY,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    code_hash    TEXT NOT NULL UNIQUE,
+    code_expires_at TEXT NOT NULL,
+    -- 'summary' = nyckeltal, rapporter och mål. 'detail' lägger till enskilda transaktioner.
+    level        TEXT NOT NULL CHECK (level IN ('summary','detail')),
+    advisor_id   INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    accepted_at  TEXT,
+    expires_at   TEXT NOT NULL,
+    revoked_at   TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX advisor_grants_household ON advisor_grants(household_id);
+  CREATE INDEX advisor_grants_advisor ON advisor_grants(advisor_id);
+
+  CREATE TABLE advisor_approvals (
+    grant_id    INTEGER NOT NULL REFERENCES advisor_grants(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    approved_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (grant_id, user_id)
+  );
+
+  -- Rådgivarens egna anteckningar. Kunden ser dem inte. De stannar hos rådgivaren när samtycket upphör.
+  CREATE TABLE advisor_notes (
+    id           INTEGER PRIMARY KEY,
+    advisor_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    body         TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX advisor_notes_lookup ON advisor_notes(advisor_id, household_id);
+
+  -- Varje gång rådgivaren läser kundens data. Kunden ser loggen.
+  CREATE TABLE advisor_access_log (
+    id           INTEGER PRIMARY KEY,
+    grant_id     INTEGER NOT NULL REFERENCES advisor_grants(id) ON DELETE CASCADE,
+    household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    advisor_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    action       TEXT NOT NULL,
+    at           TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX advisor_log_household ON advisor_access_log(household_id, id);
+  `,
 ];
 
 export function openDb(file) {

@@ -19,6 +19,7 @@ import { registerAccounts } from './routes/accounts.js';
 import { registerHousehold } from './routes/household.js';
 import { registerBudget } from './routes/budget.js';
 import { registerPlan } from './routes/plan.js';
+import { registerAdvisor, registerMonthly } from './routes/advisor.js';
 import { registerTransactions } from './routes/transactions.js';
 import { registerReports } from './routes/reports.js';
 
@@ -62,6 +63,8 @@ export function createApp({ db, prices }) {
   registerHousehold(deps);
   registerBudget(deps);
   registerPlan(deps);
+  registerMonthly(deps);
+  registerAdvisor(deps);
   registerTransactions(deps);
   registerReports(deps);
 

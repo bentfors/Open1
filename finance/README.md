@@ -1,6 +1,6 @@
 # Min ekonomi
 
-Privatekonomi med inloggning, innehav till aktuell kurs, inklistrade kontoutdrag, resultat- och balansrapport. Version 2: hushåll, budget, mål och scenarier. Månadsrapport och rådgivarvy är inte byggda än, se [Nästa steg](#nästa-steg).
+Privatekonomi med inloggning, innehav till aktuell kurs, inklistrade kontoutdrag, resultat- och balansrapport. Version 3: hushåll, budget, mål, scenarier, månadsrapport och rådgivarvy med samtycke.
 
 Inga externa beroenden. Kräver Node.js 22.13 eller senare (SQLite ingår i Node).
 
@@ -18,6 +18,7 @@ npm test
 | `COOKIE_SECURE` | `1` i production | `0` för http, till exempel lokalt |
 | `TRUST_PROXY` | `0` | `1` bakom en proxy, så att IP läses ur `X-Forwarded-For` |
 | `ALLOW_SIGNUP` | `1` | `0` stänger registrering när alla som ska ha konto har det |
+| `ADVISOR_ENABLED` | `1` | `0` stänger av rådgivarfunktionen helt (samtycke och rådgivarvy) |
 | `PRICE_PROVIDER` | `yahoo` | `none` stänger av automatiska kurser. Då gäller manuella kurser. |
 | `PRICE_TTL_MINUTES` | `15` | Hur länge en hämtad kurs återanvänds |
 
@@ -47,7 +48,24 @@ npm test
 
 **Scenarier.** Händelser: köp (med kontantinsats, lån, amortering, löpande kostnader, värdeutveckling och valfri försäljning), engångsbelopp och löpande ändringar. Motorn räknar månad för månad från din ekonomi idag (kassa, placeringar, skulder med ränta) och din budget, och jämför med att inte göra något. Stresstest med två procentenheter högre ränta, underskott när pengarna tar slut, skuldkvot, varning för bolån över 85 % av priset. Antagandena (avkastning, ränta på kontanter, värdeutveckling, inflation) sätts under Inställningar och är gissningar.
 
+## Månadsrapport
+
+Resultat mot snittet för de tre föregående månaderna, de största förändringarna per kategori, budget mot utfall, läget idag (kontanter, placeringar, skulder), mål och en lista med observationer. Observationerna är regelbaserade och kommer ur siffrorna: underskott, utgifter som sticker ut, återkommande poster som uteblivit (till exempel en lön som inte kommit), nya större utgifter, okategoriserat, gamla kontoutdrag, innehav utan kurs, buffert (tumregeln 3–6 månader), mål som ligger efter. Texterna beskriver vad siffrorna visar och aldrig vad du bör köpa eller sälja. Rapporten kan skrivas ut eller sparas som PDF via webbläsaren. Det finns ingen e-postutskick, eftersom servern inte har någon e-post.
+
+## Rådgivare
+
+**Samtycke.** Kunden skapar en engångskod (giltig sju dagar) och väljer nivå: *sammanfattning* (nyckeltal, rapporter, budget, mål, scenarier) eller *detaljer* (dessutom enskilda transaktioner), och hur länge samtycket gäller (högst 24 månader). Rådgivaren har ett vanligt konto och löser in koden. Samtycket är aktivt först när alla nuvarande hushållsmedlemmar godkänt det. Går en ny person med i hushållet vilar samtycket tills hen godkänt. Vem som helst i hushållet kan återkalla direkt. Ett återkallat samtycke kan inte återupplivas.
+
+**Vad rådgivaren ser.** Bara det som är delat. Privata konton, deras transaktioner och innehav, och till och med att ett privat konto finns länkat till ett mål, syns aldrig. Rådgivaren kan bara läsa. Varje öppnad sida loggas, och kunden ser loggen under Inställningar.
+
+**Samtalspunkter.** Rådgivarvyn har samma observationer som månadsrapporten plus en lista med punkter att ta upp: stor andel kontanter, koncentration i värdepapper (ett innehav över en fjärdedel), inget pensionskonto registrerat, inga försäkringspremier synliga, skuldsättning, dyra skulder, låg sparkvot, inga mål. Kunden ser samma lista i sin månadsrapport. Punkterna är underlag för ett samtal. De är tumregler och kan bero på uppgifter som saknas i appen.
+
+**Anteckningar.** Rådgivaren kan skriva egna anteckningar per kund. Kunden ser dem aldrig. De stannar hos rådgivaren när samtycket upphör (men kan inte kompletteras), eftersom rådgivaren själv ansvarar för sin dokumentation.
+
 ## Begränsningar du bör känna till
+
+- **Rådgivarfunktionen är ingen färdig tjänst för en reglerad verksamhet.** Det finns ingen identifiering av rådgivaren (vem som helst med ett konto kan lösa in en kod du ger bort), ingen kontroll av tillstånd hos Finansinspektionen, inget personuppgiftsbiträdesavtal, ingen gallringsrutin, ingen tvåfaktorinloggning och ingen revisionssäker logg (loggen är en tabell som en databasadministratör kan ändra). Kunden ansvarar för att koden ges till rätt person. Den som driver tjänsten är personuppgiftsansvarig eller biträde för kundernas ekonomiska uppgifter och behöver rutiner, rättslig grund och information till de registrerade enligt GDPR.
+- **Observationerna är inte rådgivning.** Ger tjänsten automatiska personliga rekommendationer om finansiella instrument kan det kräva tillstånd. Därför innehåller texterna bara iakttagelser. Låt en jurist granska formuleringarna innan tjänsten erbjuds andra.
 
 - **Scenarier är räkneövningar, inte förutsägelser.** Resultatet bestäms av antagandena. Skatt, ränteavdrag, bidrag och bankens kreditprövning är inte modellerade, och inkomsten är det som sätts in på kontot. Skuldkvoten är räknad på inkomst efter skatt och går därför inte att jämföra med bankens.
 - **Standardvärdena för hus och båt är gissningar** (ränta, amorteringstid, driftkostnad, värdeutveckling). Byt mot dina egna.
@@ -65,6 +83,6 @@ npm test
 
 ## Nästa steg
 
-1. **Månadsrapport.** Samma data, per månad: avvikelser mot snittet, nya och borttappade återkommande utgifter, sparkvot, kurspåverkan på innehav, färdig att skriva ut eller maila.
-2. **Rådgivarvy.** Kräver en samtyckesmodell (kunden bjuder in och kan återkalla, rådgivaren får skrivskyddad åtkomst, allt loggas) och en roll per användare. Det är den enda delen med verklig juridisk tyngd: personuppgiftsansvar (GDPR) och, om systemet ger personliga rekommendationer, krav på tillstånd för investeringsrådgivning. Låt rådgivarvyn visa nyckeltal och flaggor, inte rekommendationer.
+1. E-postutskick av månadsrapporten och påminnelse när den är klar (kräver e-post, som saknas).
+2. Identifiering och tvåfaktorinloggning för rådgivare, rådgivarregister och en riktig revisionslogg.
 3. Budget och mål, återkommande utgifter, lånekalkyler och pension, importmallar per bank, tvåfaktorinloggning.

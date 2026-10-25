@@ -58,7 +58,9 @@ export function registerAuth({ db, router }) {
     return respond({ ok: true }, { headers: { 'Set-Cookie': sessionCookie('', { clear: true }) } });
   });
 
-  router.add('GET', '/api/auth/me', {}, ({ user }) => ({ user: publicUser(user), signup: config.allowSignup, household_size: members(db, user.household_id).length }));
+  router.add('GET', '/api/auth/me', {}, ({ user }) => ({ user: publicUser(user), signup: config.allowSignup, household_size: members(db, user.household_id).length,
+    advisor_enabled: config.advisorEnabled,
+    advisor_clients: db.prepare('SELECT COUNT(*) AS n FROM advisor_grants WHERE advisor_id = ? AND revoked_at IS NULL').get(user.id).n }));
 
   router.add('GET', '/api/auth/config', { auth: 'public' }, () => ({ signup: config.allowSignup }));
 
@@ -97,6 +99,8 @@ export function registerAuth({ db, router }) {
       budgets: mine('SELECT * FROM budgets WHERE household_id = ?', user.household_id),
       goals: mine('SELECT * FROM goals WHERE household_id = ?', user.household_id),
       scenarios: mine('SELECT * FROM scenarios WHERE household_id = ?', user.household_id),
+      advisor_consents: mine('SELECT id, level, accepted_at, expires_at, revoked_at, created_at FROM advisor_grants WHERE household_id = ?', user.household_id),
+      advisor_access_log: mine('SELECT grant_id, action, at FROM advisor_access_log WHERE household_id = ? ORDER BY id', user.household_id),
     };
   });
 }

@@ -20,3 +20,20 @@ export function scopeOf(user, mode = 'household') {
   };
   return sc;
 }
+
+// Rådgivarens vy av ett hushåll: bara delade konton och innehav, aldrig privata, och aldrig skrivrätt.
+export function advisorScope(householdId) {
+  const hid = Number(householdId);
+  const sharedAccounts = `SELECT x.id FROM accounts x WHERE x.household_id = ${hid} AND x.shared = 1`;
+  return {
+    userId: 0,
+    householdId: hid,
+    me: false,
+    mode: 'advisor',
+    acct: (alias = 'a') => `${alias}.household_id = ${hid} AND ${alias}.shared = 1`,
+    holdings: (alias = 'h') => `${alias}.household_id = ${hid} AND ${alias}.shared = 1 AND (${alias}.account_id IS NULL OR ${alias}.account_id IN (${sharedAccounts}))`,
+    get write() {
+      throw new Error('Rådgivare har bara läsrätt.');
+    },
+  };
+}

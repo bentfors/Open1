@@ -11,6 +11,8 @@ import { renderSettings } from './views/settings.js';
 import { renderBudget } from './views/budget.js';
 import { renderGoals } from './views/goals.js';
 import { renderScenarios } from './views/scenarios.js';
+import { renderMonthly } from './views/monthly.js';
+import { renderAdvisor } from './views/advisor.js';
 
 const app = document.getElementById('app');
 
@@ -24,6 +26,8 @@ const ROUTES = {
   balans: { label: 'Balans', view: renderBalance },
   mal: { label: 'Mål', view: renderGoals },
   scenarier: { label: 'Scenarier', view: renderScenarios },
+  manadsrapport: { label: 'Månadsrapport', view: renderMonthly },
+  radgivare: { label: 'Rådgivare', view: renderAdvisor, advisor: true },
   installningar: { label: 'Inställningar', view: renderSettings, hidden: true },
 };
 
@@ -37,7 +41,7 @@ function currentRoute() {
 function buildNav(active) {
   const nav = h('nav', { class: 'nav', 'aria-label': 'Huvudmeny' });
   for (const [name, r] of Object.entries(ROUTES)) {
-    if (r.hidden) continue;
+    if (r.hidden || (r.advisor && !state.advisorEnabled)) continue;
     add(nav, h('a', { href: `#/${name}`, 'aria-current': name === active ? 'page' : null }, r.label));
   }
   return nav;
@@ -121,6 +125,7 @@ async function loadMe() {
   const me = await get('/api/auth/me');
   state.user = me.user;
   state.householdSize = me.household_size;
+  state.advisorEnabled = me.advisor_enabled && me.advisor_clients > 0;
   if (me.household_size < 2) state.scope = 'household';
 }
 
