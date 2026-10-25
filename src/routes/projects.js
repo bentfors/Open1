@@ -2,6 +2,7 @@ import { bad, conflict, notFound } from '../http.js';
 import { f, parse } from '../validate.js';
 import { insertRow, updateRow, tx } from '../db.js';
 import { today } from '../dates.js';
+import { audit, changesFor } from '../audit.js';
 
 const PROJECT_SCHEMA = {
   customer_id: f.int({ required: true, min: 1, label: 'Kund' }),
@@ -79,7 +80,7 @@ export function registerProjects({ db, router }) {
     return project;
   });
 
-  router.add('POST', '/api/projects', { auth: 'admin' }, ({ body }) => {
+  router.add('POST', '/api/projects', { auth: 'admin' }, ({ body, user }) => {
     const data = parse(body, PROJECT_SCHEMA);
     assertProjectRefs(db, data);
     assertDates(data, null);
@@ -91,11 +92,12 @@ export function registerProjects({ db, router }) {
       for (const name of DEFAULT_ACTIVITIES) {
         insertRow(db, 'activities', { project_id: id, name, billable: data.billing_type === 'internal' ? 0 : 1 });
       }
+      audit(db, user, { entity: 'project', action: 'create', entityId: id, label: `${data.code} ${data.name}`, projectId: id, changes: changesFor(db, null, data, 'project') });
       return { id };
     });
   });
 
-  router.add('PATCH', '/api/projects/:id', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PATCH', '/api/projects/:id', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
     const existing = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
     if (!existing) throw notFound('Projektet finns inte.');
@@ -105,11 +107,15 @@ export function registerProjects({ db, router }) {
     if (data.code && db.prepare('SELECT 1 FROM projects WHERE code = ? AND id <> ?').get(data.code, id)) {
       throw conflict('Projektnumret används redan.');
     }
-    updateRow(db, 'projects', id, data);
+    tx(db, () => {
+      updateRow(db, 'projects', id, data);
+      const merged = { ...existing, ...data };
+      audit(db, user, { entity: 'project', action: 'update', entityId: id, label: `${merged.code} ${merged.name}`, projectId: id, changes: changesFor(db, existing, data, 'project') });
+    });
     return { ok: true };
   });
 
-  router.add('DELETE', '/api/projects/:id', { auth: 'admin' }, ({ params }) => {
+  router.add('DELETE', '/api/projects/:id', { auth: 'admin' }, ({ params, user }) => {
     const id = Number(params.id);
     const used =
       db
@@ -120,34 +126,47 @@ export function registerProjects({ db, router }) {
         )
         .get(id, id, id).n;
     if (used) throw conflict('Projektet har rapporterad tid eller kostnader. Avsluta det i stället.');
-    db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    const existing = db.prepare('SELECT code, name FROM projects WHERE id = ?').get(id);
+    tx(db, () => {
+      if (existing) audit(db, user, { entity: 'project', action: 'delete', entityId: id, label: `${existing.code} ${existing.name}`, projectId: id });
+      db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    });
     return { ok: true };
   });
 
   // Projektmedlemmar
-  router.add('PUT', '/api/projects/:id/members/:userId', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PUT', '/api/projects/:id/members/:userId', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
     const userId = Number(params.userId);
     if (!db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id)) throw notFound('Projektet finns inte.');
-    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) throw notFound('Användaren finns inte.');
+    const member = db.prepare('SELECT name FROM users WHERE id = ?').get(userId);
+    if (!member) throw notFound('Användaren finns inte.');
     const data = parse(body, { hourly_rate: f.num({ nullable: true, min: 0, max: 100000, label: 'Timpris' }) });
-    db.prepare(
-      `INSERT INTO project_members (project_id, user_id, hourly_rate) VALUES (?, ?, ?)
-       ON CONFLICT(project_id, user_id) DO UPDATE SET hourly_rate = excluded.hourly_rate`,
-    ).run(id, userId, data.hourly_rate ?? null);
+    const rate = { hourly_rate: data.hourly_rate ?? null };
+    const before = db.prepare('SELECT hourly_rate FROM project_members WHERE project_id = ? AND user_id = ?').get(id, userId);
+    tx(db, () => {
+      db.prepare(
+        `INSERT INTO project_members (project_id, user_id, hourly_rate) VALUES (?, ?, ?)
+         ON CONFLICT(project_id, user_id) DO UPDATE SET hourly_rate = excluded.hourly_rate`,
+      ).run(id, userId, rate.hourly_rate);
+      audit(db, user, { entity: 'project_member', action: before ? 'update' : 'create', label: member.name, userId, projectId: id, changes: changesFor(db, before, rate) });
+    });
     return { ok: true };
   });
 
-  router.add('DELETE', '/api/projects/:id/members/:userId', { auth: 'admin' }, ({ params }) => {
-    db.prepare('DELETE FROM project_members WHERE project_id = ? AND user_id = ?').run(
-      Number(params.id),
-      Number(params.userId),
-    );
+  router.add('DELETE', '/api/projects/:id/members/:userId', { auth: 'admin' }, ({ params, user }) => {
+    const id = Number(params.id);
+    const userId = Number(params.userId);
+    const member = db.prepare('SELECT u.name FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = ? AND pm.user_id = ?').get(id, userId);
+    tx(db, () => {
+      if (member) audit(db, user, { entity: 'project_member', action: 'delete', label: member.name, userId, projectId: id });
+      db.prepare('DELETE FROM project_members WHERE project_id = ? AND user_id = ?').run(id, userId);
+    });
     return { ok: true };
   });
 
   // Aktiviteter
-  router.add('POST', '/api/projects/:id/activities', { auth: 'admin' }, ({ params, body }) => {
+  router.add('POST', '/api/projects/:id/activities', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
     const project = db.prepare('SELECT billing_type FROM projects WHERE id = ?').get(id);
     if (!project) throw notFound('Projektet finns inte.');
@@ -155,12 +174,16 @@ export function registerProjects({ db, router }) {
     if (db.prepare('SELECT 1 FROM activities WHERE project_id = ? AND name = ?').get(id, data.name)) {
       throw conflict('Aktiviteten finns redan i projektet.');
     }
-    return { id: insertRow(db, 'activities', { ...data, project_id: id }) };
+    return tx(db, () => {
+      const activityId = insertRow(db, 'activities', { ...data, project_id: id });
+      audit(db, user, { entity: 'activity', action: 'create', entityId: activityId, label: data.name, projectId: id, changes: changesFor(db, null, data) });
+      return { id: activityId };
+    });
   });
 
-  router.add('PATCH', '/api/activities/:id', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PATCH', '/api/activities/:id', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
-    const existing = db.prepare('SELECT project_id FROM activities WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT * FROM activities WHERE id = ?').get(id);
     if (!existing) throw notFound('Aktiviteten finns inte.');
     const data = parse(body, ACTIVITY_SCHEMA, { partial: true });
     if (
@@ -169,16 +192,23 @@ export function registerProjects({ db, router }) {
     ) {
       throw conflict('Aktiviteten finns redan i projektet.');
     }
-    updateRow(db, 'activities', id, data);
+    tx(db, () => {
+      updateRow(db, 'activities', id, data);
+      audit(db, user, { entity: 'activity', action: 'update', entityId: id, label: data.name ?? existing.name, projectId: existing.project_id, changes: changesFor(db, existing, data) });
+    });
     return { ok: true };
   });
 
-  router.add('DELETE', '/api/activities/:id', { auth: 'admin' }, ({ params }) => {
+  router.add('DELETE', '/api/activities/:id', { auth: 'admin' }, ({ params, user }) => {
     const id = Number(params.id);
     if (db.prepare('SELECT 1 FROM time_entries WHERE activity_id = ? LIMIT 1').get(id)) {
       throw conflict('Aktiviteten har rapporterad tid. Inaktivera den i stället.');
     }
-    db.prepare('DELETE FROM activities WHERE id = ?').run(id);
+    const existing = db.prepare('SELECT name, project_id FROM activities WHERE id = ?').get(id);
+    tx(db, () => {
+      if (existing) audit(db, user, { entity: 'activity', action: 'delete', entityId: id, label: existing.name, projectId: existing.project_id });
+      db.prepare('DELETE FROM activities WHERE id = ?').run(id);
+    });
     return { ok: true };
   });
 

@@ -2,6 +2,20 @@ import { bad, conflict, forbidden } from '../http.js';
 import { tx } from '../db.js';
 import { optDate, optId } from '../validate.js';
 import { approverClause, approverParams, getSettings, isAdmin, resolveRates } from '../domain.js';
+import { audit } from '../audit.js';
+
+const KIND_TEXT = { time: ['tidpost', 'tidposter'], expense: ['utlägg', 'utlägg'], mileage: ['körning', 'körningar'] };
+
+// Loggraden visar bara person och projekt när alla rader i anropet gäller samma. Annars lämnas fältet tomt.
+function scopeOf(rows) {
+  const users = new Set(rows.map((r) => r.user_id));
+  const projects = new Set(rows.map((r) => r.project_id));
+  return {
+    userId: users.size === 1 ? [...users][0] : null,
+    projectId: projects.size === 1 ? ([...projects][0] ?? null) : null,
+    more: users.size > 1 ? `${users.size} personer` : '',
+  };
+}
 
 // Per typ: tabell, datumkolumn och hur raden kopplas till projekt.
 const KINDS = {
@@ -106,10 +120,10 @@ export function registerApprovals({ db, router }) {
     const params = approverParams(user);
     ids.forEach((id, i) => (params[`i${i}`] = id));
     const placeholders = ids.map((_, i) => `:i${i}`).join(',');
-    const extra = kind.table === 'time_entries' ? ', x.user_id, x.activity_id' : '';
+    const extra = kind.table === 'time_entries' ? ', x.activity_id' : '';
     const rows = db
       .prepare(
-        `SELECT x.id, x.${kind.date} AS date${extra}
+        `SELECT x.id, x.${kind.date} AS date, x.user_id, p.id AS project_id${extra}
          FROM ${kind.from}
          WHERE x.id IN (${placeholders}) AND ${kind.submitted} AND ${clause(kind)}`,
       )
@@ -119,6 +133,8 @@ export function registerApprovals({ db, router }) {
     }
     return rows;
   }
+
+  const countText = (name, n) => `${n} ${KIND_TEXT[name][n === 1 ? 0 : 1]}`;
 
   router.add('POST', '/api/approvals/decide', {}, ({ user, body }) => {
     const kind = Object.hasOwn(KINDS, body.kind) ? KINDS[body.kind] : null;
@@ -138,6 +154,8 @@ export function registerApprovals({ db, router }) {
       if (body.decision === 'reject') {
         const stmt = db.prepare(`UPDATE ${kind.table} SET status = 'rejected', reject_note = ? WHERE id = ?`);
         for (const r of rows) stmt.run(note, r.id);
+        const scope = scopeOf(rows);
+        audit(db, user, { entity: 'approval', action: 'reject', label: countText(body.kind, rows.length), userId: scope.userId, projectId: scope.projectId, note: `Anledning: ${note}${scope.more ? ` (${scope.more})` : ''}` });
         return { rejected: rows.length };
       }
 
@@ -154,19 +172,21 @@ export function registerApprovals({ db, router }) {
         }
         approve.run(user.id, r.id);
       }
+      const scope = scopeOf(rows);
+      audit(db, user, { entity: 'approval', action: 'approve', label: countText(body.kind, rows.length), userId: scope.userId, projectId: scope.projectId, note: scope.more });
       return { approved: rows.length };
     });
   });
 
   // Administratören kan öppna godkänt igen, så länge raden inte är fakturerad.
-  router.add('POST', '/api/approvals/reopen', { auth: 'admin' }, ({ body }) => {
+  router.add('POST', '/api/approvals/reopen', { auth: 'admin' }, ({ body, user }) => {
     const kind = Object.hasOwn(KINDS, body.kind) ? KINDS[body.kind] : null;
     if (!kind) throw bad('Okänd typ.');
     const ids = parseIds(body);
     return tx(db, () => {
       const rows = db
         .prepare(
-          `SELECT id, invoice_id FROM ${kind.table} WHERE id IN (${idList(ids)}) AND status = 'approved'`,
+          `SELECT x.id, x.invoice_id, x.user_id, p.id AS project_id FROM ${kind.from} WHERE x.id IN (${idList(ids)}) AND x.status = 'approved'`,
         )
         .all(...ids);
       if (rows.length !== ids.length) throw bad('Någon av raderna är inte godkänd.');
@@ -174,6 +194,8 @@ export function registerApprovals({ db, router }) {
       db.prepare(
         `UPDATE ${kind.table} SET status = ?, approved_by = NULL, approved_at = NULL WHERE id IN (${idList(ids)})`,
       ).run(kind.reopenTo, ...ids);
+      const scope = scopeOf(rows);
+      audit(db, user, { entity: 'approval', action: 'reopen', label: countText(body.kind, rows.length), userId: scope.userId, projectId: scope.projectId, note: scope.more });
       return { reopened: rows.length };
     });
   });

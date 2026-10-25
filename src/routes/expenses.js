@@ -3,8 +3,9 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { HANDLED, bad, conflict, forbidden, notFound } from '../http.js';
 import { f, parse, optDate, optId } from '../validate.js';
-import { insertRow, updateRow } from '../db.js';
+import { insertRow, updateRow, tx } from '../db.js';
 import { getSettings, isAdmin, isFinance } from '../domain.js';
+import { audit, changesFor } from '../audit.js';
 
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 
@@ -68,6 +69,14 @@ export function registerExpenses({ db, router, dataDir }) {
     if (locked_until && date <= locked_until && !isAdmin(user)) {
       throw forbidden(`Perioden är låst till och med ${locked_until}. Kontakta ekonomi eller en administratör.`);
     }
+  }
+
+  // Egna poster loggas inte. Men en administratör som ändrar åt någon annan, eller i en låst period, ska synas.
+  function logEdit(user, entity, row, date, { action, label, changes }) {
+    const { locked_until } = getSettings(db);
+    const reasons = [row.user_id !== user.id ? 'åt en annan person' : null, locked_until && date <= locked_until ? 'i en låst period' : null].filter(Boolean);
+    if (!reasons.length) return;
+    audit(db, user, { entity, action, entityId: row.id, label, userId: row.user_id, projectId: row.project_id, changes, note: `Ändrat ${reasons.join(' och ')}.` });
   }
 
   function scopeUserId(user, query) {
@@ -161,7 +170,10 @@ export function registerExpenses({ db, router, dataDir }) {
       Object.assign(update, { receipt_file: null, receipt_name: null, receipt_type: null });
       oldFile = row.receipt_file;
     }
-    updateRow(db, 'expenses', row.id, update);
+    tx(db, () => {
+      updateRow(db, 'expenses', row.id, update);
+      logEdit(user, 'expense', row, row.expense_date, { action: 'update', label: data.description ?? row.description, changes: changesFor(db, { ...row, date: row.expense_date }, data, 'expense') });
+    });
     removeReceiptFile(oldFile);
     return { ok: true };
   });
@@ -169,7 +181,10 @@ export function registerExpenses({ db, router, dataDir }) {
   router.add('DELETE', '/api/expenses/:id', {}, ({ user, params }) => {
     const row = loadOwned('expenses', Number(params.id), user);
     assertNotLocked(user, row.expense_date);
-    db.prepare('DELETE FROM expenses WHERE id = ?').run(row.id);
+    tx(db, () => {
+      logEdit(user, 'expense', row, row.expense_date, { action: 'delete', label: row.description, changes: changesFor(db, row, { description: null, amount: null }, 'expense') });
+      db.prepare('DELETE FROM expenses WHERE id = ?').run(row.id);
+    });
     removeReceiptFile(row.receipt_file);
     return { ok: true };
   });
@@ -247,14 +262,20 @@ export function registerExpenses({ db, router, dataDir }) {
       update.trip_date = data.date;
       delete update.date;
     }
-    updateRow(db, 'mileage', row.id, update);
+    tx(db, () => {
+      updateRow(db, 'mileage', row.id, update);
+      logEdit(user, 'mileage', row, row.trip_date, { action: 'update', label: data.purpose ?? row.purpose, changes: changesFor(db, { ...row, date: row.trip_date }, data, 'mileage') });
+    });
     return { ok: true };
   });
 
   router.add('DELETE', '/api/mileage/:id', {}, ({ user, params }) => {
     const row = loadOwned('mileage', Number(params.id), user);
     assertNotLocked(user, row.trip_date);
-    db.prepare('DELETE FROM mileage WHERE id = ?').run(row.id);
+    tx(db, () => {
+      logEdit(user, 'mileage', row, row.trip_date, { action: 'delete', label: row.purpose, changes: changesFor(db, row, { purpose: null, km: null }, 'mileage') });
+      db.prepare('DELETE FROM mileage WHERE id = ?').run(row.id);
+    });
     return { ok: true };
   });
 }

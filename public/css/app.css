@@ -261,6 +261,47 @@ table.data tr.picked td { background: var(--accent-soft); }
 .group-head { background: var(--surface-2); padding: 0.7rem 0.85rem; font-weight: 500; color: var(--text); display: flex; gap: 0.8rem; align-items: center; border-bottom: 1px solid var(--border); }
 .group-head + .table-wrap table.data thead th { background: var(--surface); }
 
+/* ── Ändringslogg ───────────────────────────────────────────────────── */
+table.data th.sortable { padding: 0; }
+.sort-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.65rem 0.85rem;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sort-btn:hover { color: var(--text); }
+.sort-btn.active { color: var(--accent); }
+.sort-arrow { font-size: 0.75em; opacity: 0.8; }
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+.linklike:hover { color: var(--accent); text-decoration-color: var(--accent); }
+.log-desc { min-width: 15rem; }
+.log-desc .chg-field { color: var(--dim); }
+.log-desc summary { cursor: pointer; color: var(--accent); font-size: 0.86rem; }
+.log-foot { padding: 0.7rem 0.85rem; border-top: 1px solid var(--border); }
+.log-foot .row { align-items: center; }
+.log-foot select { width: auto; padding: 0.3rem 0.6rem; }
+
 /* ── Veckovy ────────────────────────────────────────────────────────── */
 .week-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .week-title { font-size: 1.3rem; font-weight: 300; color: var(--text); min-width: 15rem; letter-spacing: -0.01em; }

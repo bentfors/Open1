@@ -292,6 +292,35 @@ export const MIGRATIONS = [
   // 6: två ekonominivåer. finance: 0 ingen, 1 ekonomi, 2 ekonomi-superuser.
   // De som redan hade behörigheten kunde allt som ekonomi kan, så de blir superuser och ingen tappar något.
   `UPDATE users SET finance = 2 WHERE finance = 1;`,
+
+  // 7: ändringslogg. Bara tillägg: triggers stoppar ändring och radering, och namnen sparas som de hette då,
+  // så att loggen läses rätt även när någon byter namn eller tas bort.
+  `CREATE TABLE audit_log (
+     id             INTEGER PRIMARY KEY,
+     at             TEXT NOT NULL,
+     day            TEXT NOT NULL,
+     actor_id       INTEGER,
+     actor_name     TEXT NOT NULL,
+     entity         TEXT NOT NULL,
+     action         TEXT NOT NULL,
+     entity_id      INTEGER,
+     label          TEXT NOT NULL DEFAULT '',
+     user_id        INTEGER,
+     user_label     TEXT,
+     customer_id    INTEGER,
+     customer_label TEXT,
+     project_id     INTEGER,
+     project_label  TEXT,
+     changes        TEXT,
+     note           TEXT NOT NULL DEFAULT ''
+   );
+   CREATE INDEX audit_day ON audit_log(day);
+   CREATE INDEX audit_actor ON audit_log(actor_id);
+   CREATE INDEX audit_user ON audit_log(user_id);
+   CREATE INDEX audit_customer ON audit_log(customer_id);
+   CREATE INDEX audit_project ON audit_log(project_id);
+   CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_log BEGIN SELECT RAISE(ABORT, 'Ändringsloggen kan inte ändras.'); END;
+   CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_log BEGIN SELECT RAISE(ABORT, 'Ändringsloggen kan inte raderas.'); END;`,
 ];
 
 export function openDb(file) {

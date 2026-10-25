@@ -1,6 +1,7 @@
 import { get, post, put, patch, del } from '../api.js';
 import { h, add, setKids, fmtMoney, fmtNum, fmtHours, fmtDate, fmtSpan, fmtDaysLeft, toast, editDialog, confirmDialog, openDialog, dataTable, optionList, buildForm, localToday } from '../dom.js';
 import { state, isAdmin } from '../state.js';
+import { logTab } from './auditlog.js';
 
 const TABS = [
   ['anvandare', 'Användare'],
@@ -11,6 +12,7 @@ const TABS = [
   ['provision', 'Provision'],
   ['franvaro', 'Frånvaro'],
   ['installningar', 'Inställningar'],
+  ['logg', 'Ändringslogg'],
 ];
 
 // Ekonomi-superuser ser hela administrationen men ändrar bara användare. Övriga skrivknappar finns inte för hen,
@@ -832,5 +834,5 @@ export async function renderAdmin(root, params) {
   );
   const body = h('div', { class: 'stack' });
   add(root, body);
-  await { anvandare: usersTab, kunder: customersTab, projekt: projectsTab, avtal: contractsTab, kategorier: categoriesTab, provision: commissionTab, franvaro: absenceTab, installningar: settingsTab }[active](body);
+  await { anvandare: usersTab, kunder: customersTab, projekt: projectsTab, avtal: contractsTab, kategorier: categoriesTab, provision: commissionTab, franvaro: absenceTab, installningar: settingsTab, logg: logTab }[active](body);
 }

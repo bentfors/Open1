@@ -2,6 +2,12 @@ import { bad, notFound } from '../http.js';
 import { f, parse } from '../validate.js';
 import { insertRow, updateRow, tx } from '../db.js';
 import { listRules } from '../commission.js';
+import { audit, changesFor, changeOf } from '../audit.js';
+
+const RULE_FIELDS = ['earner_id', 'name', 'kind', 'period', 'percent', 'amount', 'min_hours', 'valid_from', 'valid_to'];
+
+const tierText = (tiers) => (tiers ?? []).map((t) => `från ${t.min} konsulter: ${t.percent} %`).join(', ');
+const sameIds = (a, b) => JSON.stringify([...a].sort((x, y) => x - y)) === JSON.stringify([...b].sort((x, y) => x - y));
 
 const RULE_SCHEMA = {
   earner_id: f.int({ required: true, min: 1, label: 'Mottagare' }),
@@ -64,7 +70,25 @@ export function registerCommission({ db, router }) {
     }
   }
 
-  router.add('POST', '/api/commission-rules', { auth: 'admin' }, ({ body }) => {
+  // Konsulter, kategorier och trappsteg ligger utanför regelns egna kolumner men styr utbetalningen, så de loggas som egna rader.
+  const names = (table, ids) =>
+    ids
+      .map((id) => db.prepare(`SELECT name FROM ${table} WHERE id = ?`).get(id)?.name ?? `#${id}`)
+      .sort((a, b) => a.localeCompare(b, 'sv'))
+      .join(', ');
+  const ruleLabel = (earnerId, name) => {
+    const earner = db.prepare('SELECT name FROM users WHERE id = ?').get(earnerId)?.name ?? `#${earnerId}`;
+    return name ? `${earner}: ${name}` : earner;
+  };
+  const listChanges = ({ oldSources = [], oldCategories = [], oldTiers = [] }, { sources, categories, tiers }) => {
+    const out = [];
+    if (!sameIds(oldSources, sources)) out.push(changeOf('Konsulter (TB-underlag)', names('users', oldSources), names('users', sources)));
+    if (!sameIds(oldCategories, categories)) out.push(changeOf('Kategorier', names('categories', oldCategories), names('categories', categories)));
+    if (tierText(oldTiers) !== tierText(tiers)) out.push(changeOf('Trappsteg', tierText(oldTiers), tierText(tiers)));
+    return out;
+  };
+
+  router.add('POST', '/api/commission-rules', { auth: 'admin' }, ({ body, user }) => {
     const data = parse(body, RULE_SCHEMA);
     const sources = parseIdList(body.source_ids, 'Konsulterna') ?? [];
     const categories = parseIdList(body.category_ids, 'Kategorierna') ?? [];
@@ -77,12 +101,21 @@ export function registerCommission({ db, router }) {
     validate(data, sources, categories);
     return tx(db, () => {
       const id = insertRow(db, 'commission_rules', { earner_id: data.earner_id, kind: data.kind, period: data.period });
-      writeRule(id, data, data.kind === 'per_consultant' ? [] : sources, categories, tiers);
+      const effective = data.kind === 'per_consultant' ? [] : sources;
+      writeRule(id, data, effective, categories, tiers);
+      audit(db, user, {
+        entity: 'commission_rule',
+        action: 'create',
+        entityId: id,
+        label: ruleLabel(data.earner_id, data.name),
+        userId: data.earner_id,
+        changes: [...changesFor(db, null, data, 'commission_rule'), ...listChanges({}, { sources: effective, categories, tiers: tiers ?? [] })],
+      });
       return { id };
     });
   });
 
-  router.add('PATCH', '/api/commission-rules/:id', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PATCH', '/api/commission-rules/:id', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
     const [existing] = listRules(db, { ruleId: id });
     if (!existing) throw notFound('Regeln finns inte.');
@@ -95,12 +128,43 @@ export function registerCommission({ db, router }) {
     if (merged.kind !== 'tb_percent') data.percent = null;
     if (merged.kind !== 'per_consultant') data.amount = null;
     validate(merged, sources, categories);
-    tx(db, () => writeRule(id, data, merged.kind === 'per_consultant' ? [] : sources, categories, tiers));
+    const effective = merged.kind === 'per_consultant' ? [] : sources;
+    tx(db, () => {
+      writeRule(id, data, effective, categories, tiers);
+      audit(db, user, {
+        entity: 'commission_rule',
+        action: 'update',
+        entityId: id,
+        label: ruleLabel(merged.earner_id, merged.name),
+        userId: merged.earner_id,
+        changes: [
+          ...changesFor(db, existing, data, 'commission_rule'),
+          ...listChanges(
+            { oldSources: existing.sources.map((s) => s.id), oldCategories: existing.categories.map((c) => c.id), oldTiers: existing.tiers },
+            { sources: effective, categories, tiers: tiers ?? [] },
+          ),
+        ],
+      });
+    });
     return { ok: true };
   });
 
-  router.add('DELETE', '/api/commission-rules/:id', { auth: 'admin' }, ({ params }) => {
-    db.prepare('DELETE FROM commission_rules WHERE id = ?').run(Number(params.id));
+  router.add('DELETE', '/api/commission-rules/:id', { auth: 'admin' }, ({ params, user }) => {
+    const id = Number(params.id);
+    const [existing] = listRules(db, { ruleId: id });
+    tx(db, () => {
+      if (existing) {
+        const last = [
+          ...changesFor(db, existing, Object.fromEntries(RULE_FIELDS.map((k) => [k, null])), 'commission_rule'),
+          ...listChanges(
+            { oldSources: existing.sources.map((s) => s.id), oldCategories: existing.categories.map((c) => c.id), oldTiers: existing.tiers },
+            { sources: [], categories: [], tiers: [] },
+          ),
+        ];
+        audit(db, user, { entity: 'commission_rule', action: 'delete', entityId: id, label: ruleLabel(existing.earner_id, existing.name), userId: existing.earner_id, changes: last, note: 'Så såg regeln ut när den togs bort.' });
+      }
+      db.prepare('DELETE FROM commission_rules WHERE id = ?').run(id);
+    });
     return { ok: true };
   });
 }

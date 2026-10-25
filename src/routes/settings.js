@@ -1,7 +1,8 @@
 import { bad, forbidden } from '../http.js';
 import { f, parse } from '../validate.js';
-import { setSetting } from '../db.js';
+import { setSetting, tx } from '../db.js';
 import { getSettings, isAdmin } from '../domain.js';
+import { audit, changesFor } from '../audit.js';
 
 const SCHEMA = {
   company_name: f.str({ required: true, max: 80, label: 'Företagsnamn' }),
@@ -22,7 +23,12 @@ export function registerSettings({ db, router }) {
     if (!isAdmin(user) && Object.keys(data).some((k) => k !== 'locked_until')) {
       throw forbidden('Du kan bara ändra periodlåsningen. Övriga inställningar ändrar administratörer.');
     }
-    for (const [key, value] of Object.entries(data)) setSetting(db, key, value ?? '');
+    const before = getSettings(db);
+    tx(db, () => {
+      for (const [key, value] of Object.entries(data)) setSetting(db, key, value ?? '');
+      const onlyLock = Object.keys(data).every((k) => k === 'locked_until');
+      audit(db, user, { entity: 'setting', action: 'update', label: onlyLock ? 'Periodlåsning' : 'Inställningar', changes: changesFor(db, before, data) });
+    });
     return getSettings(db);
   });
 }

@@ -27,6 +27,7 @@ import { registerCommission } from './routes/commission.js';
 import { registerContracts } from './routes/contracts.js';
 import { registerStats } from './routes/stats.js';
 import { registerSettings } from './routes/settings.js';
+import { registerAudit } from './routes/audit.js';
 
 const DEFAULT_BODY_LIMIT = 256 * 1024;
 
@@ -71,6 +72,7 @@ export function createApp({ db, dataDir = config.dataDir }) {
   registerContracts(deps);
   registerStats(deps);
   registerSettings(deps);
+  registerAudit(deps);
 
   function clientIp(req) {
     if (config.trustProxy) {

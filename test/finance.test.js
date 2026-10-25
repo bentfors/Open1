@@ -251,10 +251,12 @@ describe('ekonomiadministratörer, två nivåer', () => {
   test('migrering: den som hade ekonomibehörighet blir superuser, ingen tappar något', () => {
     const db = openDb(':memory:');
     db.exec(`INSERT INTO users (email, name, password_hash, finance) VALUES ('a@t.se','Gammal ekonomi','x',1), ('b@t.se','Vanlig','x',0)`);
+    db.exec('DROP TABLE audit_log'); // och utan ändringslogg
     db.exec('PRAGMA user_version = 5'); // som en databas före nivåerna
     migrate(db);
     const rows = db.prepare('SELECT name, finance FROM users ORDER BY id').all();
     assert.deepEqual(rows.map((r) => [r.name, r.finance]), [['Gammal ekonomi', 2], ['Vanlig', 0]]);
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'audit_log'").get(), 'migreringen skapar ändringsloggen');
     db.close();
   });
 });

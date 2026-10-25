@@ -3,6 +3,7 @@ import { f, parse } from '../validate.js';
 import { insertRow, updateRow, tx } from '../db.js';
 import { hashPassword, checkPasswordPolicy, destroyUserSessions } from '../auth.js';
 import { isAdmin } from '../domain.js';
+import { audit, changesFor } from '../audit.js';
 
 const USER_COLUMNS = `u.id, u.email, u.name, u.role, u.finance, u.category_id, c.name AS category_name, u.manager_id,
   m.name AS manager_name, u.bm_id, bm.name AS bm_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.active, u.must_change_password`;
@@ -95,12 +96,12 @@ export function registerUsers({ db, router }) {
     if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(data.email)) {
       throw conflict('E-postadressen används redan.');
     }
-    const id = insertRow(db, 'users', {
-      ...data,
-      password_hash: await hashPassword(body.password),
-      must_change_password: 1,
+    const password_hash = await hashPassword(body.password);
+    return tx(db, () => {
+      const id = insertRow(db, 'users', { ...data, password_hash, must_change_password: 1 });
+      audit(db, user, { entity: 'user', action: 'create', entityId: id, label: data.name, userId: id, changes: changesFor(db, null, data) });
+      return { id };
     });
-    return { id };
   });
 
   router.add('PATCH', '/api/users/:id', { auth: 'finance_super' }, ({ params, body, user }) => {
@@ -123,6 +124,7 @@ export function registerUsers({ db, router }) {
     tx(db, () => {
       updateRow(db, 'users', id, data);
       if (data.active === 0) destroyUserSessions(db, id);
+      audit(db, user, { entity: 'user', action: 'update', entityId: id, label: data.name ?? existing.name, userId: id, changes: changesFor(db, existing, data) });
     });
     return { ok: true };
   });
@@ -130,7 +132,7 @@ export function registerUsers({ db, router }) {
   // Administratören (eller ekonomi-superuser) sätter ett tillfälligt lösenord. Användaren måste byta vid nästa inloggning.
   router.add('POST', '/api/users/:id/password', { auth: 'finance_super' }, async ({ params, body, user }) => {
     const id = Number(params.id);
-    const existing = db.prepare('SELECT role FROM users WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT name, role FROM users WHERE id = ?').get(id);
     if (!existing) throw notFound('Användaren finns inte.');
     assertMayChange(user, existing, {});
     const problem = checkPasswordPolicy(body.password);
@@ -139,6 +141,7 @@ export function registerUsers({ db, router }) {
     tx(db, () => {
       db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?').run(hash, id);
       destroyUserSessions(db, id);
+      audit(db, user, { entity: 'user', action: 'password', entityId: id, label: existing.name, userId: id, note: 'Tillfälligt lösenord satt. Användaren loggades ut och måste byta lösenord.' });
     });
     return { ok: true };
   });
@@ -153,28 +156,40 @@ export function registerUsers({ db, router }) {
       .all(),
   );
 
-  router.add('POST', '/api/categories', { auth: 'admin' }, ({ body }) => {
+  router.add('POST', '/api/categories', { auth: 'admin' }, ({ body, user }) => {
     const data = parse(body, CATEGORY_SCHEMA);
     if (db.prepare('SELECT 1 FROM categories WHERE name = ?').get(data.name)) throw conflict('Kategorin finns redan.');
-    return { id: insertRow(db, 'categories', data) };
+    return tx(db, () => {
+      const id = insertRow(db, 'categories', data);
+      audit(db, user, { entity: 'category', action: 'create', entityId: id, label: data.name, changes: changesFor(db, null, data) });
+      return { id };
+    });
   });
 
-  router.add('PATCH', '/api/categories/:id', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PATCH', '/api/categories/:id', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
-    if (!db.prepare('SELECT 1 FROM categories WHERE id = ?').get(id)) throw notFound();
+    const existing = db.prepare('SELECT * FROM categories WHERE id = ?').get(id);
+    if (!existing) throw notFound();
     const data = parse(body, CATEGORY_SCHEMA, { partial: true });
     if (data.name && db.prepare('SELECT 1 FROM categories WHERE name = ? AND id <> ?').get(data.name, id)) {
       throw conflict('Kategorin finns redan.');
     }
-    updateRow(db, 'categories', id, data);
+    tx(db, () => {
+      updateRow(db, 'categories', id, data);
+      audit(db, user, { entity: 'category', action: 'update', entityId: id, label: data.name ?? existing.name, changes: changesFor(db, existing, data) });
+    });
     return { ok: true };
   });
 
-  router.add('DELETE', '/api/categories/:id', { auth: 'admin' }, ({ params }) => {
+  router.add('DELETE', '/api/categories/:id', { auth: 'admin' }, ({ params, user }) => {
     const id = Number(params.id);
     const used = db.prepare('SELECT COUNT(*) AS n FROM users WHERE category_id = ?').get(id).n;
     if (used) throw conflict(`Kategorin används av ${used} användare. Flytta dem först.`);
-    db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+    const existing = db.prepare('SELECT name FROM categories WHERE id = ?').get(id);
+    tx(db, () => {
+      if (existing) audit(db, user, { entity: 'category', action: 'delete', entityId: id, label: existing.name });
+      db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+    });
     return { ok: true };
   });
 
@@ -189,19 +204,27 @@ export function registerUsers({ db, router }) {
     name: f.str({ required: true, max: 60, label: 'Namn' }),
     active: f.bool({ label: 'Aktiv' }),
   };
-  router.add('POST', '/api/absence-types', { auth: 'admin' }, ({ body }) => {
+  router.add('POST', '/api/absence-types', { auth: 'admin' }, ({ body, user }) => {
     const data = parse(body, ABSENCE_SCHEMA);
     if (db.prepare('SELECT 1 FROM absence_types WHERE name = ?').get(data.name)) throw conflict('Typen finns redan.');
-    return { id: insertRow(db, 'absence_types', data) };
+    return tx(db, () => {
+      const id = insertRow(db, 'absence_types', data);
+      audit(db, user, { entity: 'absence_type', action: 'create', entityId: id, label: data.name, changes: changesFor(db, null, data) });
+      return { id };
+    });
   });
-  router.add('PATCH', '/api/absence-types/:id', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PATCH', '/api/absence-types/:id', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
-    if (!db.prepare('SELECT 1 FROM absence_types WHERE id = ?').get(id)) throw notFound();
+    const existing = db.prepare('SELECT * FROM absence_types WHERE id = ?').get(id);
+    if (!existing) throw notFound();
     const data = parse(body, ABSENCE_SCHEMA, { partial: true });
     if (data.name && db.prepare('SELECT 1 FROM absence_types WHERE name = ? AND id <> ?').get(data.name, id)) {
       throw conflict('Typen finns redan.');
     }
-    updateRow(db, 'absence_types', id, data);
+    tx(db, () => {
+      updateRow(db, 'absence_types', id, data);
+      audit(db, user, { entity: 'absence_type', action: 'update', entityId: id, label: data.name ?? existing.name, changes: changesFor(db, existing, data) });
+    });
     return { ok: true };
   });
 }

@@ -66,7 +66,7 @@ Gränsen går vid sådant som är svårt att ta tillbaka eller som ändrar vad a
 
 Det som en superuser **inte** kan göra med användare, eftersom det vore en väg till administratörsrättigheter: ändra någons roll eller ekonomibehörighet (sin egen inklusive), skapa administratörer eller ekonomianvändare, ändra eller återställa lösenord för en administratör, eller utse sig själv till någons BM eller chef.
 
-Spärrarna är inte vattentäta. Den som kan sätta lösenord kan logga in som den personen, och den som kan sätta BM kan peka ut en annan person hen kontrollerar. Det betyder att en superuser i praktiken kan attestera i någon annans namn. Det är en förtroendefråga, inte något systemet kan förhindra. Om det är viktigt att kunna se efteråt vem som ändrat vad behövs en ändringslogg, som inte finns än. Administratörer har alltid båda nivåerna.
+Spärrarna är inte vattentäta. Den som kan sätta lösenord kan logga in som den personen, och den som kan sätta BM kan peka ut en annan person hen kontrollerar. Det betyder att en superuser i praktiken kan attestera i någon annans namn. Det är en förtroendefråga, inte något systemet kan förhindra. Det som går att göra är att se det efteråt: varje lösenordsändring och BM-ändring står i [ändringsloggen](#ändringslogg). Administratörer har alltid båda nivåerna.
 
 **Utlägg och körjournal.** Utlägg med kvitto (JPEG, PNG, WebP eller PDF, högst 5 MB) och körd sträcka. Båda kan vidarefaktureras till kund.
 
@@ -77,6 +77,18 @@ Spärrarna är inte vattentäta. Den som kan sätta lösenord kan logga in som d
 **Övriga rapporter.** Tidrapport per projekt, kund, aktivitet, användare, kategori, månad, dag eller frånvarotyp, med CSV-export för svensk Excel. TB per konsult och provision.
 
 **Periodlåsning.** Ekonomi-superuser och administratörer kan låsa perioder till ett datum (Fakturering → Periodlåsning). Då kan användare, BM och ekonomi på lägre nivå varken ändra eller attestera i perioden. Bara administratörer kan fortfarande rätta i en låst period.
+
+### Ändringslogg
+
+Admin → Ändringslogg visar vem som ändrat vad, och går att sortera och filtrera på nästan allt: utförd av, typ av ändring (skapad, ändrad, borttagen, lösenord satt, godkänd, avslagen, öppnad igen, avskriven, ångrad), vad ändringen avser (användare, kund, projekt, provisionsregel …), berörd kund, berört projekt och berörd användare, datum och fritext. Klicka på en kolumnrubrik för att sortera, eller på ett namn i tabellen för att filtrera på det. Det går att exportera urvalet till CSV. Ekonomi-superuser och administratörer läser loggen.
+
+Varje rad visar tidpunkt, vem som gjorde det, vad som berördes och före och efter för varje ändrat fält (id:n visas som namn, till exempel `BM: – → Cia BM`). Namn sparas som de hette när ändringen gjordes, så ett namnbyte eller en borttagning skriver inte om historiken. Lösenord loggas aldrig, bara att ett tillfälligt lösenord sattes.
+
+**Loggas:** användare (inklusive lösenord, roll, BM, kostnad), kunder, projekt, projektmedlemmar och aktiviteter, kategorier, frånvarotyper, provisionsregler (inklusive vilka konsulter och trappsteg som ingår, och hur en borttagen regel såg ut), anställningar och uppdrag, inställningar och periodlåsning, fakturaunderlag (skapat och ångrat), avskrivning och återställning, attest (godkänt, avslaget, öppnat igen, en rad per anrop med antal), samt tid, utlägg och körningar som någon ändrat åt en annan person eller en administratör ändrat i en låst period.
+
+**Loggas inte:** egen tid och egna utlägg, inloggningar, vem som tittat på vad, och ändringar som görs direkt i databasfilen.
+
+Loggen skrivs i samma transaktion som ändringen, så en ändring utan loggrad kan inte uppstå, och en misslyckad ändring lämnar ingen rad. Raderna kan inte ändras eller tas bort: det finns inga rutter som skriver till loggen och databasen stoppar `UPDATE` och `DELETE` med triggers. Den som har tillgång till själva databasfilen kan ändå ta bort triggers och skriva om loggen, så den skyddar mot missbruk i programmet, inte mot den som har serverns filer. Loggen växer utan gräns. Gamla rader rensas aldrig, så planera in sådant själv om den blir stor.
 
 ### Provision
 
@@ -173,6 +185,7 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 | TB per konsult och provisionsrapport | | | egen provision | | ✔ | ✔ |
 | Statistik och prognos | | sina konsulter | egen | | alla (läsa) | alla |
 | Läsa användare, avtal, provisionsregler, projektens team och inställningar | | | | | ✔ | ✔ |
+| Läsa ändringsloggen | | | | | ✔ | ✔ |
 | Ändra kunder, projekt, avtal, provisionsregler, övriga inställningar | | | | | | ✔ |
 | Ändra användare | | | | | ✔, utom roll, ekonomibehörighet och administratörer | ✔ |
 
@@ -192,7 +205,8 @@ Ekonomi ser kundens pengar men inte provisioner. Det gör bara ekonomi-superuser
 
 - Databasen är en SQLite-fil i WAL-läge. Säkerhetskopiera med `sqlite3 data/x-time.sqlite ".backup 'backup.sqlite'"` och kopiera `data/receipts/` med.
 - Inloggningsspärren ligger i minnet och nollställs vid omstart. Kör en enda instans.
-- Tester: `npm test` (126 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
+- Tester: `npm test` (behörigheter, tidregler, attest, provisionsregler, fakturering, upplupet och ändringsloggen).
+- Ändringsloggen ligger i samma databas (`audit_log`) och följer med säkerhetskopian.
 
 ## Begränsningar och antaganden
 
@@ -209,7 +223,7 @@ Jag har inte kunnat läsa Millnets egen dokumentation, så jämförelsen med Flo
 - **Ingen flerbolagsfunktion.** Ett företag per installation.
 - **Projektledare** kan inte själva ändra team eller aktiviteter. Det gör administratör.
 - **Administratör kan inte rapportera tid åt andra i gränssnittet.** API:t stödjer det.
-- Ingen revisionslogg över ändringar utöver vem som godkände och när.
+- **Ändringsloggen** täcker administration, fakturering och attest, men inte egen tid, egna utlägg eller inloggningar. Se [Ändringslogg](#ändringslogg).
 
 ## Utseende
 

@@ -5,6 +5,7 @@ import { today } from '../dates.js';
 import { round2 } from '../domain.js';
 import { toCsv } from '../csv.js';
 import { ITEMS_CTE, INVOICE_NUMBER_SQL, TABLES, classify } from '../billing.js';
+import { audit } from '../audit.js';
 
 const MAX_ROWS = 3000;
 const MAX_IDS = 5000;
@@ -25,7 +26,36 @@ function idLists(body) {
 
 const placeholders = (ids) => ids.map(() => '?').join(',');
 
+const KIND_TEXT = { time: ['tidpost', 'tidposter'], expense: ['utlägg', 'utlägg'], mileage: ['körning', 'körningar'] };
+const countText = (ids) =>
+  Object.entries(ids)
+    .filter(([, list]) => list.length)
+    .map(([kind, list]) => `${list.length} ${KIND_TEXT[kind][list.length === 1 ? 0 : 1]}`)
+    .join(', ');
+
 export function registerBilling({ db, router }) {
+  // Vilket projekt och vilken person raderna gäller, om det bara är ett. Annars lämnas fältet tomt i loggen.
+  function scopeOf(ids) {
+    const projects = new Set();
+    const users = new Set();
+    for (const [kind, list] of Object.entries(ids)) {
+      if (!list.length) continue;
+      const sql =
+        kind === 'time'
+          ? `SELECT DISTINCT a.project_id AS p, te.user_id AS u FROM time_entries te JOIN activities a ON a.id = te.activity_id WHERE te.id IN (${placeholders(list)})`
+          : `SELECT DISTINCT project_id AS p, user_id AS u FROM ${TABLES[kind].table} WHERE id IN (${placeholders(list)})`;
+      for (const r of db.prepare(sql).all(...list)) {
+        projects.add(r.p);
+        users.add(r.u);
+      }
+    }
+    return {
+      projectId: projects.size === 1 ? ([...projects][0] ?? null) : null,
+      userId: users.size === 1 ? [...users][0] : null,
+      more: projects.size > 1 ? ` (${projects.size} projekt)` : '',
+    };
+  }
+
   // ── Projekt- och kundvy ───────────────────────────────────────────────
   router.add('GET', '/api/billing/items', { auth: 'finance' }, ({ query }) => {
     const project = optId(query.project_id, 'Projekt') ?? null;
@@ -148,11 +178,13 @@ export function registerBilling({ db, router }) {
         db.prepare(`UPDATE ${t} SET waived_at = datetime('now'), waived_by = ?, waived_note = ? WHERE id IN (${placeholders(list)})`).run(user.id, note, ...list);
         n += list.length;
       }
+      const scope = scopeOf(ids);
+      audit(db, user, { entity: 'billing', action: 'waive', label: countText(ids), projectId: scope.projectId, userId: scope.userId, note: `Anledning: ${note}${scope.more}` });
       return { waived: n };
     });
   });
 
-  router.add('POST', '/api/billing/restore', { auth: 'finance_super' }, ({ body }) => {
+  router.add('POST', '/api/billing/restore', { auth: 'finance_super' }, ({ user, body }) => {
     const ids = idLists(body);
     return tx(db, () => {
       let n = 0;
@@ -164,6 +196,8 @@ export function registerBilling({ db, router }) {
         db.prepare(`UPDATE ${t} SET waived_at = NULL, waived_by = NULL, waived_note = NULL WHERE id IN (${placeholders(list)})`).run(...list);
         n += list.length;
       }
+      const scope = scopeOf(ids);
+      audit(db, user, { entity: 'billing', action: 'restore', label: countText(ids), projectId: scope.projectId, userId: scope.userId, note: scope.more.trim() });
       return { restored: n };
     });
   });
@@ -274,6 +308,8 @@ export function registerBilling({ db, router }) {
       const { total } = buildLines(invoiceId);
       db.prepare('UPDATE invoices SET total_amount = ? WHERE id = ?').run(total, invoiceId);
       const { number } = db.prepare(`SELECT ${INVOICE_NUMBER_SQL} AS number FROM invoices inv WHERE inv.id = ?`).get(invoiceId);
+      const scope = scopeOf(ids);
+      audit(db, user, { entity: 'invoice', action: 'create', entityId: invoiceId, label: number, customerId, projectId: scope.projectId, note: `${countText(ids)}, ${total} kr${scope.more}` });
       return { id: invoiceId, total, number };
     });
   });
@@ -322,10 +358,13 @@ export function registerBilling({ db, router }) {
   });
 
   // Ångra underlaget: raderna blir fakturerbara igen.
-  router.add('DELETE', '/api/invoices/:id', { auth: 'finance_super' }, ({ params }) => {
+  router.add('DELETE', '/api/invoices/:id', { auth: 'finance_super' }, ({ params, user }) => {
     const id = Number(params.id);
-    loadInvoice(id);
+    const inv = loadInvoice(id);
     tx(db, () => {
+      const rows = Object.fromEntries(Object.entries(TABLES).map(([kind, { table }]) => [kind, db.prepare(`SELECT id FROM ${table} WHERE invoice_id = ?`).all(id).map((r) => r.id)]));
+      const scope = scopeOf(rows);
+      audit(db, user, { entity: 'invoice', action: 'undo', entityId: id, label: inv.number, customerId: inv.customer_id, projectId: scope.projectId, note: `${countText(rows)}, ${inv.total_amount} kr${scope.more}. Raderna kan faktureras igen.` });
       for (const { table } of Object.values(TABLES)) db.prepare(`UPDATE ${table} SET invoice_id = NULL WHERE invoice_id = ?`).run(id);
       db.prepare('DELETE FROM invoices WHERE id = ?').run(id);
     });

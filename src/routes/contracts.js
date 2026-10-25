@@ -1,7 +1,8 @@
 import { bad, conflict, notFound } from '../http.js';
 import { f, parse } from '../validate.js';
-import { insertRow, updateRow } from '../db.js';
+import { insertRow, updateRow, tx } from '../db.js';
 import { today, daysBetween } from '../dates.js';
+import { audit, changesFor } from '../audit.js';
 
 const EMPLOYMENT_SCHEMA = {
   user_id: f.int({ required: true, min: 1, label: 'Anställd' }),
@@ -26,8 +27,14 @@ const ASSIGNMENT_SCHEMA = {
 
 const overlaps = (a, b) => a.start_date <= (b.end_date ?? '9999-12-31') && b.start_date <= (a.end_date ?? '9999-12-31');
 
+// För en raderad post: alla fält som "borttagna", så att loggen visar hur posten såg ut.
+const cleared = (schema) => Object.fromEntries(Object.keys(schema).map((k) => [k, null]));
+
 export function registerContracts({ db, router }) {
   const userRow = (id) => db.prepare('SELECT id, name, weekly_hours, active FROM users WHERE id = ?').get(id);
+  const userName = (id) => userRow(id)?.name ?? `#${id}`;
+  const customerName = (id) => db.prepare('SELECT name FROM customers WHERE id = ?').get(id)?.name ?? `#${id}`;
+  const assignmentLabel = (a) => `${userName(a.user_id)} hos ${customerName(a.customer_id)}`;
 
   // ── Anställningar ─────────────────────────────────────────────────────
   router.add('GET', '/api/employments', { auth: 'finance_super' }, () =>
@@ -47,26 +54,41 @@ export function registerContracts({ db, router }) {
     if (others.some((o) => overlaps(m, o))) throw conflict('Anställningen överlappar en annan anställning för samma person.');
   }
 
-  router.add('POST', '/api/employments', { auth: 'admin' }, ({ body }) => {
+  router.add('POST', '/api/employments', { auth: 'admin' }, ({ body, user }) => {
     const data = parse(body, EMPLOYMENT_SCHEMA);
     data.end_date ??= null;
     data.type ??= 'permanent';
     validateEmployment(data, null);
-    return { id: insertRow(db, 'employments', data) };
+    return tx(db, () => {
+      const id = insertRow(db, 'employments', data);
+      audit(db, user, { entity: 'employment', action: 'create', entityId: id, label: userName(data.user_id), userId: data.user_id, changes: changesFor(db, null, data, 'employment') });
+      return { id };
+    });
   });
 
-  router.add('PATCH', '/api/employments/:id', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PATCH', '/api/employments/:id', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
     const existing = db.prepare('SELECT * FROM employments WHERE id = ?').get(id);
     if (!existing) throw notFound('Anställningen finns inte.');
     const data = parse(body, EMPLOYMENT_SCHEMA, { partial: true });
-    validateEmployment({ ...existing, ...data }, id);
-    updateRow(db, 'employments', id, data);
+    const merged = { ...existing, ...data };
+    validateEmployment(merged, id);
+    tx(db, () => {
+      updateRow(db, 'employments', id, data);
+      audit(db, user, { entity: 'employment', action: 'update', entityId: id, label: userName(merged.user_id), userId: merged.user_id, changes: changesFor(db, existing, data, 'employment') });
+    });
     return { ok: true };
   });
 
-  router.add('DELETE', '/api/employments/:id', { auth: 'admin' }, ({ params }) => {
-    db.prepare('DELETE FROM employments WHERE id = ?').run(Number(params.id));
+  router.add('DELETE', '/api/employments/:id', { auth: 'admin' }, ({ params, user }) => {
+    const id = Number(params.id);
+    const existing = db.prepare('SELECT * FROM employments WHERE id = ?').get(id);
+    tx(db, () => {
+      if (existing) {
+        audit(db, user, { entity: 'employment', action: 'delete', entityId: id, label: userName(existing.user_id), userId: existing.user_id, changes: changesFor(db, existing, cleared(EMPLOYMENT_SCHEMA), 'employment'), note: 'Så såg anställningen ut när den togs bort.' });
+      }
+      db.prepare('DELETE FROM employments WHERE id = ?').run(id);
+    });
     return { ok: true };
   });
 
@@ -110,26 +132,41 @@ export function registerContracts({ db, router }) {
     }
   }
 
-  router.add('POST', '/api/assignments', { auth: 'admin' }, ({ body }) => {
+  router.add('POST', '/api/assignments', { auth: 'admin' }, ({ body, user }) => {
     const data = parse(body, ASSIGNMENT_SCHEMA);
     data.end_date ??= null;
     data.project_id ??= null;
     validateAssignment(data, null);
-    return { id: insertRow(db, 'assignments', data) };
+    return tx(db, () => {
+      const id = insertRow(db, 'assignments', data);
+      audit(db, user, { entity: 'assignment', action: 'create', entityId: id, label: assignmentLabel(data), userId: data.user_id, customerId: data.customer_id, projectId: data.project_id, changes: changesFor(db, null, data, 'assignment') });
+      return { id };
+    });
   });
 
-  router.add('PATCH', '/api/assignments/:id', { auth: 'admin' }, ({ params, body }) => {
+  router.add('PATCH', '/api/assignments/:id', { auth: 'admin' }, ({ params, body, user }) => {
     const id = Number(params.id);
     const existing = db.prepare('SELECT * FROM assignments WHERE id = ?').get(id);
     if (!existing) throw notFound('Uppdraget finns inte.');
     const data = parse(body, ASSIGNMENT_SCHEMA, { partial: true });
-    validateAssignment({ ...existing, ...data }, id);
-    updateRow(db, 'assignments', id, data);
+    const merged = { ...existing, ...data };
+    validateAssignment(merged, id);
+    tx(db, () => {
+      updateRow(db, 'assignments', id, data);
+      audit(db, user, { entity: 'assignment', action: 'update', entityId: id, label: assignmentLabel(merged), userId: merged.user_id, customerId: merged.customer_id, projectId: merged.project_id, changes: changesFor(db, existing, data, 'assignment') });
+    });
     return { ok: true };
   });
 
-  router.add('DELETE', '/api/assignments/:id', { auth: 'admin' }, ({ params }) => {
-    db.prepare('DELETE FROM assignments WHERE id = ?').run(Number(params.id));
+  router.add('DELETE', '/api/assignments/:id', { auth: 'admin' }, ({ params, user }) => {
+    const id = Number(params.id);
+    const existing = db.prepare('SELECT * FROM assignments WHERE id = ?').get(id);
+    tx(db, () => {
+      if (existing) {
+        audit(db, user, { entity: 'assignment', action: 'delete', entityId: id, label: assignmentLabel(existing), userId: existing.user_id, customerId: existing.customer_id, projectId: existing.project_id, changes: changesFor(db, existing, cleared(ASSIGNMENT_SCHEMA), 'assignment'), note: 'Så såg uppdraget ut när det togs bort.' });
+      }
+      db.prepare('DELETE FROM assignments WHERE id = ?').run(id);
+    });
     return { ok: true };
   });
 

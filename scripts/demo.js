@@ -52,8 +52,8 @@ if (fresh) {
   const am = await mk('am@demo.test', 'Axel Andersson', 'AM');
   const bm = await mk('bm@demo.test', 'Berit Björk', 'BM');
   const pl = await mk('pl@demo.test', 'Peter Projektledare', 'TA');
-  await mk('ekonomi@demo.test', 'Ella Ekonomi', 'OH', { finance: 2 });
-  await mk('ekonomi1@demo.test', 'Erik Ekonomiassistent', 'OH', { finance: 1 });
+  const sup = await mk('ekonomi@demo.test', 'Ella Ekonomi', 'OH', { finance: 2 });
+  const eko = await mk('ekonomi1@demo.test', 'Erik Ekonomiassistent', 'OH', { finance: 1 });
   const k1 = await mk('erik@demo.test', 'Erik Expert', 'Konsult Expert', { manager_id: chef.id, bm_id: bm.id, cost_rate: 650 });
   const k2 = await mk('nora@demo.test', 'Nora Next', 'Konsult Next', { manager_id: chef.id, bm_id: bm.id, cost_rate: 500 });
   const k3 = await mk('tim@demo.test', 'Tim Talent', 'Konsult Talent', { manager_id: chef.id, bm_id: bm.id, cost_rate: 380 });
@@ -113,21 +113,21 @@ if (fresh) {
       await u.c.post('/api/time/submit', { week_start: monday });
     }
   }
-  // Allt utom senaste veckan godkänns, så att attestkön har innehåll.
-  const queue = await admin.get('/api/approvals');
+  // Allt utom senaste veckan godkänns av BM, så att attestkön har innehåll.
+  const queue = await bm.c.get('/api/approvals');
   const lastMonday = addDays(thisMonday, -7);
   const ids = queue.time.filter((r) => r.date < lastMonday).map((r) => r.id);
-  if (ids.length) await admin.post('/api/approvals/decide', { kind: 'time', ids, decision: 'approve' });
+  if (ids.length) await bm.c.post('/api/approvals/decide', { kind: 'time', ids, decision: 'approve' });
 
   const d = addDays(thisMonday, -9);
   await k1.c.post('/api/expenses', { date: d, description: 'Tågbiljett Stockholm–Göteborg', amount: 1290, vat: 77.4, project_id: p1, billable: true });
   await k2.c.post('/api/mileage', { date: d, from_place: 'Kontoret', to_place: 'Nordic Retail', purpose: 'Kundmöte', km: 84, project_id: p2, billable: true });
   // Fakturera de äldsta veckorna på NR-100 men lämna resten kvar att fakturera.
   const cutoff = addDays(thisMonday, -21);
-  const open = await admin.get(`/api/billing/items?project_id=${p1}`);
+  const open = await eko.c.get(`/api/billing/items?project_id=${p1}`);
   const first = open.items.filter((i) => i.selectable && i.date < cutoff);
   if (first.length) {
-    await admin.post('/api/invoices', {
+    await eko.c.post('/api/invoices', {
       customer_id: kund1,
       invoice_date: addDays(thisMonday, -14),
       note: 'Ny webbplattform, första etappen',
@@ -136,6 +136,11 @@ if (fresh) {
       mileage_ids: first.filter((i) => i.kind === 'mileage').map((i) => i.id),
     });
   }
+  // Några ändringar av olika personer i efterhand, så att ändringsloggen (Admin → Ändringslogg) har något att visa.
+  await sup.c.patch(`/api/users/${k3.id}`, { cost_rate: 400 });
+  await admin.patch(`/api/projects/${p2}`, { hourly_rate: 1100 });
+  await admin.patch(`/api/customers/${kund1}`, { contact_name: 'Lena Lindgren' });
+  await admin.patch(`/api/commission-rules/1`, { percent: 9 });
   console.log('Demodata skapad.');
 }
 

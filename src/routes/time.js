@@ -1,8 +1,11 @@
 import { bad, conflict, forbidden, notFound } from '../http.js';
 import { f, parse, isDate, reqId } from '../validate.js';
-import { insertRow } from '../db.js';
+import { insertRow, tx } from '../db.js';
 import { today, weekStart, weekDays } from '../dates.js';
 import { getSettings, isAdmin, resolveRates } from '../domain.js';
+import { audit, changeOf } from '../audit.js';
+
+const hoursText = (minutes) => (minutes == null ? '' : `${Math.round(minutes / 6) / 10} tim`);
 
 const ENTRY_SCHEMA = {
   date: f.date({ required: true, label: 'Datum' }),
@@ -58,7 +61,8 @@ export function registerTime({ db, router }) {
     };
   });
 
-  router.add('PUT', '/api/time/entries', {}, ({ user, body }) => {
+  // Egen tid loggas inte. Men när någon rapporterar åt en annan person, eller en administratör rättar i en låst period, ska det synas.
+  const saveEntry = (user, body) => {
     const data = parse(body, ENTRY_SCHEMA);
     if ((data.activity_id == null) === (data.absence_type_id == null)) {
       throw bad('Ange antingen en aktivitet eller en frånvarotyp.');
@@ -69,6 +73,14 @@ export function registerTime({ db, router }) {
     if (!owner || !owner.active) throw bad('Användaren finns inte eller är inaktiv.');
 
     assertNotLocked(db, user, data.date);
+
+    const { locked_until } = getSettings(db);
+    const reasons = [ownerId !== user.id ? 'åt en annan person' : null, locked_until && data.date <= locked_until ? 'i en låst period' : null].filter(Boolean);
+    const record = (action, before, after) => {
+      if (!reasons.length) return;
+      const projectId = data.activity_id != null ? (db.prepare('SELECT project_id AS v FROM activities WHERE id = ?').get(data.activity_id)?.v ?? null) : null;
+      audit(db, user, { entity: 'time', action, label: data.date, userId: ownerId, projectId, changes: [changeOf('Tid', hoursText(before), hoursText(after))], note: `Ändrat ${reasons.join(' och ')}.` });
+    };
 
     const where = data.activity_id != null ? 'activity_id = ?' : 'absence_type_id = ?';
     const target = data.activity_id ?? data.absence_type_id;
@@ -82,7 +94,10 @@ export function registerTime({ db, router }) {
     }
 
     if (data.minutes === 0) {
-      if (existing) db.prepare('DELETE FROM time_entries WHERE id = ?').run(existing.id);
+      if (existing) {
+        db.prepare('DELETE FROM time_entries WHERE id = ?').run(existing.id);
+        record('delete', existing.minutes, null);
+      }
       return { deleted: true };
     }
 
@@ -124,6 +139,7 @@ export function registerTime({ db, router }) {
         `UPDATE time_entries SET minutes = ?, note = ?, status = 'open', reject_note = NULL,
            billable = ?, bill_rate = ?, cost_rate = ?, updated_at = datetime('now') WHERE id = ?`,
       ).run(data.minutes, note, rates.billable, rates.bill_rate, rates.cost_rate, id);
+      record('update', existing.minutes, data.minutes);
     } else {
       id = insertRow(db, 'time_entries', {
         user_id: ownerId,
@@ -136,9 +152,12 @@ export function registerTime({ db, router }) {
         bill_rate: rates.bill_rate,
         cost_rate: rates.cost_rate,
       });
+      record('create', null, data.minutes);
     }
     return db.prepare(`${ENTRY_SELECT} WHERE te.id = ?`).get(id);
-  });
+  };
+
+  router.add('PUT', '/api/time/entries', {}, ({ user, body }) => tx(db, () => saveEntry(user, body)));
 
   router.add('POST', '/api/time/submit', {}, ({ user, body }) => {
     assertMonday(body.week_start);
