@@ -136,11 +136,26 @@ describe('ekonomiadministratörer, två nivåer', () => {
     }
   });
 
-  test('ekonomi ser varken TB per konsult eller andras provision', async () => {
+  test('TB per konsult och provision: bara ekonomi-superuser och administratörer', async () => {
     await admin.post('/api/commission-rules', { earner_id: bo.id, kind: 'tb_percent', period: 'month', percent: 10, source_ids: [anna.id] });
+    const range = 'from=2025-03-01&to=2025-03-31';
+
+    // Ekonomi på lägre nivå ser ingenting av detta.
+    assert.deepEqual((await basic.client.get(`/api/reports/margin?${range}`)).json.consultants, []);
+    assert.equal((await basic.client.get(`/api/reports/commission?${range}`)).json.rows.length, 0);
+
+    // Superusern ser TB per konsult och allas provision, och kan filtrera på mottagare.
+    const margin = (await sup.client.get(`/api/reports/margin?${range}`)).json.consultants;
+    assert.deepEqual([margin[0].name, margin[0].margin], ['Anna Konsult', 6200]);
+    const all = (await sup.client.get(`/api/reports/commission?${range}`)).json;
+    assert.deepEqual(all.rows.map((r) => [r.earner_name, r.commission]), [['Bo AM', 620]]);
+    assert.equal((await sup.client.get(`/api/reports/commission?${range}&earner_id=${bo.id}`)).json.rows.length, 1);
+    assert.equal((await sup.client.get(`/api/reports/commission?${range}&earner_id=${cia.id}`)).json.rows.length, 0);
+    assert.equal((await sup.client.get(`/api/reports/commission?${range}&format=csv`)).status, 200);
+
+    // Läsrätten gäller rapporterna, inte reglerna eller någons statistik.
     for (const u of both()) {
-      assert.deepEqual((await u.client.get('/api/reports/margin?from=2025-03-01&to=2025-03-31')).json.consultants, []);
-      assert.equal((await u.client.get('/api/reports/commission?from=2025-03-01&to=2025-03-31')).json.rows.length, 0);
+      assert.equal((await u.client.get('/api/commission-rules')).status, 403);
       assert.equal((await u.client.get(`/api/stats?earner_id=${bo.id}`)).json.earner.id, u.id, 'statistiken blir den egna');
     }
   });

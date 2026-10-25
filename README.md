@@ -55,6 +55,7 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 |---|---|---|
 | Se projekt och kunder att fakturera, välja rader, skapa fakturaunderlag, CSV | ✔ | ✔ |
 | Upplupet och tidrapporter med pengar för alla | ✔ | ✔ |
+| TB per konsult och provisionsrapporten för alla mottagare (läsa, inte ändra regler) | | ✔ |
 | Avskriva och ångra avskrivning | | ✔ |
 | Ångra ett skapat fakturaunderlag | | ✔ |
 | Låsa perioder (Fakturering → Periodlåsning) | | ✔ |
@@ -163,11 +164,11 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 | Avskrivning, ångra underlag, låsa perioder | | | | | ✔ | ✔ |
 | Läsa kund- och projektlistor | | | | ✔ | ✔ | ✔ |
 | Kvitton | egna | de man attesterar | egna | alla | alla | alla |
-| TB per konsult och provisionsrapport | | | egen provision | | | ✔ |
+| TB per konsult och provisionsrapport | | | egen provision | | ✔ | ✔ |
 | Statistik och prognos | | sina konsulter | egen | | | alla |
 | Användare, kunder, projekt, avtal, provisionsregler, övriga inställningar | | | | | | ✔ |
 
-Ekonomi ser alltså kundens pengar men inte provisioner eller löner. Projektledare och BM ser timmar men inte pengar.
+Ekonomi ser kundens pengar men inte provisioner. Det gör bara ekonomi-superuser och administratörer. Projektledare och BM ser timmar men inte pengar.
 
 ## Säkerhet
 

@@ -1,6 +1,6 @@
 import { get, qs } from '../api.js';
 import { h, add, setKids, fmtMoney, fmtNum, fmtDate, toast, dataTable, openDialog, monthRange, quarterRange, previousMonthEnd, localToday, optionList } from '../dom.js';
-import { state, isAdmin, isFinance } from '../state.js';
+import { state, isFinance, isFinanceSuper } from '../state.js';
 
 const round = (n) => Math.round(n * 100) / 100;
 
@@ -157,7 +157,7 @@ export function showBasis(r, capHours) {
 }
 
 async function marginReport(root) {
-  const admin = isAdmin();
+  const admin = isFinanceSuper(); // ser alla mottagare och TB per konsult, annars bara den egna provisionen
   const filter = { ...monthRange(-1) };
   const result = h('div', { class: 'stack' });
 
@@ -372,7 +372,7 @@ export async function renderReports(root, params) {
   const earner = state.user.is_earner;
   const tabs = [
     ['tid', 'Tidrapport', true],
-    ['provision', isAdmin() ? 'TB och provision' : 'Min provision', isAdmin() || earner],
+    ['provision', isFinanceSuper() ? 'TB och provision' : 'Min provision', isFinanceSuper() || earner],
     ['upplupet', 'Upplupet', isFinance()],
   ].filter((t) => t[2]);
   const active = tabs.some((t) => t[0] === params[0]) ? params[0] : 'tid';

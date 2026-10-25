@@ -1,6 +1,6 @@
 import { HANDLED, bad, sendText } from '../http.js';
 import { optDate, optId } from '../validate.js';
-import { getSettings, isAdmin, isFinance, round2 } from '../domain.js';
+import { getSettings, isFinance, isFinanceSuper, round2 } from '../domain.js';
 import { toCsv } from '../csv.js';
 import { computeCommissions, summarizeEarners } from '../commission.js';
 import { ITEMS_CTE } from '../billing.js';
@@ -131,14 +131,14 @@ export function registerReports({ db, router }) {
   });
 
   /**
-   * TB per konsult (bara administratörer).
+   * TB per konsult (administratörer och ekonomi-superuser).
    * TB = intäkt (debiterbara timmar × pris) − kostnad (timmar × intern timkostnad).
    * Frånvaro räknas inte. Inställningen tb_cost_basis avgör om ej debiterbar projekttid belastar TB.
    */
   router.add('GET', '/api/reports/margin', {}, ({ user, query }) => {
     const { from, to } = period(query);
     const settings = getSettings(db);
-    if (!isAdmin(user)) return { cost_basis: settings.tb_cost_basis, consultants: [] };
+    if (!isFinanceSuper(user)) return { cost_basis: settings.tb_cost_basis, consultants: [] };
     const consultants = db
       .prepare(
         `SELECT u.id AS user_id, u.name, c.name AS category,
@@ -167,7 +167,7 @@ export function registerReports({ db, router }) {
 
   /**
    * Provision enligt reglerna under Admin → Provision, bara på attesterad tid.
-   * Administratörer ser alla, övriga bara sina egna.
+   * Administratörer och ekonomi-superuser ser alla, övriga bara sina egna.
    * Perioder räknas hela (månad eller kvartal) och markeras som pågående tills de är slut.
    */
   router.add('GET', '/api/reports/commission', {}, ({ user, query, res }) => {
@@ -176,7 +176,7 @@ export function registerReports({ db, router }) {
     const rows = computeCommissions(db, {
       from,
       to,
-      earnerId: isAdmin(user) ? (optId(query.earner_id, 'Mottagare') ?? null) : user.id,
+      earnerId: isFinanceSuper(user) ? (optId(query.earner_id, 'Mottagare') ?? null) : user.id,
     });
     if (query.format === 'csv') {
       const KIND = { tb_percent: 'Procent av TB', per_consultant: 'Belopp per konsult', tb_tiered: 'Trappa på antal konsulter' };
