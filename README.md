@@ -104,6 +104,37 @@ Upplupet är tid, utlägg och körning som är utförda men inte fakturerade. Ra
 
 Godkänt och ej godkänt redovisas var för sig. Avslagen tid ingår inte, och avskriven tid räknas bort från avskrivningsdagen. Fastprisprojektens timmar redovisas för sig eftersom de inte faktureras per timme. Ej godkänd tid värderas med priset vid senaste sparning.
 
+### Statistik och prognos
+
+Menyvalet **Statistik** visas för den som har provisionsregler eller är BM för någon. Var och en ser bara sin egen vy. Administratörer kan välja vem de tittar på.
+
+- **Mina konsulter:** de man är BM för plus de vars TB ingår i ens regler. För varje konsult visas anställningstid, pågående och kommande uppdrag (kund, slutdatum, dagar kvar, timpris), TB förra månaden, TB hittills denna månad och prognostiserad TB de närmaste tre månaderna. Konsulter utan uppdrag märks som bänk.
+- **Nyckeltal:** konsulter i uppdrag, TB förra månaden, intjänat i år, prognos för kommande 12 månader och antal uppdrag som löper ut inom 120 dagar.
+- **Diagram:** provision per månad, utfall och prognos. Provisionen redovisas den månad perioden slutar, alltså när den tjänats in. En kvartalsregel hamnar i kvartalets sista månad.
+- **Uppdrag som löper ut:** med vad de är värda för dig, alltså hur mycket prognosen sjunker om uppdraget inte förlängs.
+- **Per regel och period:** utfall, pågående och prognos, med underlag för varje rad.
+- **Vad händer om jag säljer in mer?** Lägg in en tänkt försäljning (antal konsulter, timpris, timkostnad, start, längd) och se vad den ger i provision, månad för månad, och om den tar dig upp ett trappsteg.
+
+**Så räknas prognosen.** Varje konsult simuleras arbetsdag för arbetsdag utifrån avtalsregistret, och provisionen räknas sedan av exakt samma motor som utfallet. Alltså gäller samma trappa, golv vid 0 och bänkgräns.
+
+- Måndag–fredag räknas som arbetsdagar. Röda dagar dras inte av var för sig. I stället multipliceras allt med *beläggningen* (Admin → Inställningar, standard 90 %), som ska täcka semester, sjukdom och helgdagar.
+- En dag med uppdrag ger intäkt = timmar per vecka ÷ 5 × timpris. Kostnaden följer inställningen för TB.
+- En dag under anställning utan uppdrag är bänk. Den räknas som negativ TB enligt bänkgränsen, med räknaren som den står enligt attesterad tid.
+- Hela innevarande period räknas på avtalen. Det som attesterats hittills visas som "hittills". Passerade perioder visar utfallet.
+- Konsulter som saknar uppdrag i registret räknas som bänk, och den som saknar anställningsavtal antas vara anställd tillsvidare. Båda varnas för på sidan.
+- I ett scenario räknas den tänkta konsulten bara under sin uppdragstid. Hen läggs till som källa i dina TB-regler och räknas med i regler som räknar antal konsulter, oavsett kategorifilter.
+
+Prognosen är en uppskattning. Den förutsätter att avtalen i registret stämmer och att uppdragen inte förlängs eller ersätts, vilket är precis det man vill spela med i scenariot.
+
+### Avtalsregister
+
+Admin → Avtal. Här registreras:
+
+- **Anställningar:** person, typ (tillsvidare, visstid, provanställning), start- och slutdatum, uppsägningstid. En person kan inte ha två överlappande anställningar. Visstid kräver slutdatum.
+- **Uppdrag:** konsult, kund, valfritt projekt, roll, start- och slutdatum (tomt = löpande), timpris och timmar per vecka. Samtidiga uppdrag får tillsammans inte överstiga personens arbetstid.
+
+Under Admin → Användare syns hur länge varje person varit anställd och hur länge det pågående uppdraget varar. Sidan Avtal varnar för konsulter utan uppdrag eller anställningsavtal, uppdrag som inte ryms inom anställningen och uppdrag som tar slut inom 90 dagar.
+
 ### Pris
 
 Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i projektet, aktivitetens pris, projektets pris, personens standardpris. Priset fastställs när tiden **godkänns**. Prisändringar före attest slår alltså igenom, efter attest gör de inte det.
@@ -136,7 +167,7 @@ Projektledare ser alltså timmar men inte pengar. Det är ett medvetet val för 
 
 - Databasen är en SQLite-fil i WAL-läge. Säkerhetskopiera med `sqlite3 data/x-time.sqlite ".backup 'backup.sqlite'"` och kopiera `data/receipts/` med.
 - Inloggningsspärren ligger i minnet och nollställs vid omstart. Kör en enda instans.
-- Tester: `npm test` (95 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
+- Tester: `npm test` (114 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
 
 ## Begränsningar och antaganden
 
@@ -145,7 +176,8 @@ Jag har inte kunnat läsa Millnets egen dokumentation, så jämförelsen med Flo
 - **Provisionsreglerna** är min tolkning av att provision kan hänga på procent av TB per månad eller kvartal, och på antalet konsulter i uppdrag. Hur "i uppdrag" ska avgränsas, hur kvartal räknas för trappan (jag använder snittet av månadsantalen) och hur en dag med både debiterbar och odebiterbar tid ska räknas (jag låter all debiterbar tid göra dagen till ett uppdrag) har du inte bestämt. Kontrollera med en period där du vet facit.
 - **Fastprisprojekt** faktureras inte härifrån. Timmarna visas, och kan avskrivas när du fakturerat dem på annat sätt.
 - **Ej debiterbar tid** kan inte göras debiterbar i fakturavyn. Ändra aktivitetens inställning och låt tiden sparas om.
-- **Helgdagar och normtid.** Normen är arbetstid per vecka. Röda dagar räknas inte av.
+- **Helgdagar och normtid.** Normen är arbetstid per vecka. Röda dagar räknas inte av, varken för normtid eller i prognosen. Prognosen använder en schablon för beläggning i stället.
+- **Prognosen kan inte veta det som inte är inlagt.** Förlängningar, nya affärer och uppsägningar syns först när de finns i avtalsregistret. Kvartalsregler med trappa använder snittet av månadsantalen, vilket ger lågt utfall för ett kvartal som bara delvis har uppdrag.
 - **Ingen integration** mot lön eller bokföring. Export sker via CSV.
 - **Ingen moms** i fakturaunderlaget. Belopp är exklusive moms.
 - **Inget lösenordsåterställande via e-post.** Administratör sätter ett tillfälligt lösenord.

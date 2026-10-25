@@ -68,11 +68,10 @@ const max = (a, b) => (a > b ? a : b);
 const min = (a, b) => (a < b ? a : b);
 
 /**
- * Räknar provision för alla perioder som överlappar [from, to]. Perioden räknas alltid hel,
- * även om intervallet bara täcker en del av den, och markeras som ofullständig tills den är slut.
- * Bara attesterad tid ingår.
+ * Källan till siffrorna bakom en provisionsberäkning. Utfallet läser attesterad tid ur databasen.
+ * Prognosen (forecast.js) ger samma tre funktioner men simulerar från avtal. All annan logik delas.
  */
-export function computeCommissions(db, { from, to, earnerId = null }) {
+export function actualProvider(db) {
   const settings = getSettings(db);
   const worked = settings.tb_cost_basis === 'billable' ? 0 : 1;
   const capMinutes = settings.bench_cap_hours === null ? null : settings.bench_cap_hours * 60;
@@ -111,33 +110,48 @@ export function computeCommissions(db, { from, to, earnerId = null }) {
      )`,
   );
 
-  // En konsults TB för provision i [start, end], med bänkgränsen tillämpad.
-  function sourceBasis(userId, start, end) {
-    let tb = 0;
-    let actual = 0;
-    let minutes = 0;
-    let cappedMin = 0;
-    let counter = null; // odebiterbara minuter i sträck, hämtas från historiken först när det behövs
-    for (const day of dailyStmt.all({ user: userId, from: start, to: end, worked })) {
-      const dayTb = day.revenue - day.cost;
-      minutes += day.bill_min + day.non_min;
-      actual += dayTb;
-      if (capMinutes === null) {
-        tb += dayTb;
-      } else if (day.bill_min > 0) {
-        counter = 0; // i uppdrag: räknaren börjar om och hela dagen räknas
-        tb += dayTb;
-      } else {
-        if (counter === null) counter = carryStmt.get({ user: userId, start }).m;
-        const counted = Math.max(0, Math.min(day.non_min, capMinutes - counter));
-        counter += day.non_min;
-        tb += dayTb * (counted / day.non_min);
-        cappedMin += day.non_min - counted;
+  return {
+    sources: (rule) => rule.sources,
+    carry: (userId, start) => carryStmt.get({ user: userId, start }).m,
+    // En konsults TB för provision i [start, end], med bänkgränsen tillämpad.
+    sourceBasis(userId, start, end) {
+      let tb = 0;
+      let actual = 0;
+      let minutes = 0;
+      let billMin = 0;
+      let cappedMin = 0;
+      let counter = null; // odebiterbara minuter i sträck, hämtas från historiken först när det behövs
+      for (const day of dailyStmt.all({ user: userId, from: start, to: end, worked })) {
+        const dayTb = day.revenue - day.cost;
+        minutes += day.bill_min + day.non_min;
+        billMin += day.bill_min;
+        actual += dayTb;
+        if (capMinutes === null) {
+          tb += dayTb;
+        } else if (day.bill_min > 0) {
+          counter = 0; // i uppdrag: räknaren börjar om och hela dagen räknas
+          tb += dayTb;
+        } else {
+          if (counter === null) counter = carryStmt.get({ user: userId, start }).m;
+          const counted = Math.max(0, Math.min(day.non_min, capMinutes - counter));
+          counter += day.non_min;
+          tb += dayTb * (counted / day.non_min);
+          cappedMin += day.non_min - counted;
+        }
       }
-    }
-    return { tb, actual, minutes, cappedMin };
-  }
+      return { tb, actual, minutes, billMin, cappedMin };
+    },
+    consultantCount: (rule, start, end) =>
+      consultantCount.get({ from: start, to: end, rule: rule.id, minMinutes: rule.min_hours * 60 }).n,
+  };
+}
 
+/**
+ * Räknar provision för alla perioder som överlappar [from, to]. Perioden räknas alltid hel,
+ * även om intervallet bara täcker en del av den, och markeras som ofullständig tills den är slut.
+ * Utan egen provider ingår bara attesterad tid.
+ */
+export function computeCommissions(db, { from, to, earnerId = null, provider = actualProvider(db) }) {
   const now = today();
   const rows = [];
   for (const rule of listRules(db, { earnerId })) {
@@ -175,8 +189,8 @@ export function computeCommissions(db, { from, to, earnerId = null }) {
       const needsCount = rule.kind !== 'tb_percent';
 
       if (needsTb) {
-        row.sources = rule.sources.map((src) => {
-          const b = sourceBasis(src.id, start, end);
+        row.sources = provider.sources(rule).map((src) => {
+          const b = provider.sourceBasis(src.id, start, end);
           return {
             user_id: src.id,
             name: src.name,
@@ -193,7 +207,7 @@ export function computeCommissions(db, { from, to, earnerId = null }) {
       if (needsCount) {
         row.months = monthWindows(start, end).map((w) => ({
           month: w.start.slice(0, 7),
-          consultants: consultantCount.get({ from: w.start, to: w.end, rule: rule.id, minMinutes: rule.min_hours * 60 }).n,
+          consultants: provider.consultantCount(rule, w.start, w.end),
         }));
       }
 

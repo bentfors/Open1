@@ -118,13 +118,13 @@ async function timeReport(root) {
 // ── TB och provision ────────────────────────────────────────────────────
 const KIND_LABEL = { tb_percent: 'Procent av TB', per_consultant: 'Belopp per konsult i uppdrag', tb_tiered: 'Procent av TB, trappa på antal konsulter' };
 
-function basisText(r) {
+export function basisText(r) {
   if (r.kind === 'tb_percent') return `TB ${fmtMoney(r.tb)} × ${fmtNum(r.percent)} %`;
   if (r.kind === 'per_consultant') return `${fmtNum(r.consultants)} konsultmånader × ${fmtMoney(r.amount_per_consultant)}`;
   return `TB ${fmtMoney(r.tb)} × ${fmtNum(r.percent)} % (${fmtNum(r.consultants)} ${r.consultants === 1 ? 'konsult' : 'konsulter'} i snitt)`;
 }
 
-function showBasis(r, capHours) {
+export function showBasis(r, capHours) {
   const parts = [h('p', {}, h('strong', {}, `${r.earner_name} · ${r.rule_name || KIND_LABEL[r.kind]} · ${r.period_label}`)), h('p', { class: 'muted' }, `${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}${r.complete ? '' : ' (pågår)'}`)];
   if (r.sources.length) {
     parts.push(
@@ -149,6 +149,9 @@ function showBasis(r, capHours) {
     );
   }
   parts.push(h('p', { class: 'section-title' }, `${basisText(r)} = ${fmtMoney(r.commission)}`));
+  if (r.state === 'running' || r.state === 'forecast') {
+    parts.push(h('p', { class: 'muted' }, 'Prognos: beräknad på avtalsregistret och beläggningen i inställningarna, inte på rapporterad tid.'));
+  }
   if (r.floored) parts.push(h('p', { class: 'muted' }, `Utfallet blev ${fmtMoney(r.raw_commission)}. Provisionen kan aldrig bli lägre än 0 per regel och period.`));
   openDialog({ title: 'Underlag för provision', wide: true, content: parts });
 }

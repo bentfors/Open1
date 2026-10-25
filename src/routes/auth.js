@@ -25,6 +25,10 @@ const publicUser = (db, u) => ({
   must_change_password: !!u.must_change_password,
   // Styr om fliken Provision visas för vanliga användare.
   is_earner: !!db.prepare('SELECT 1 FROM commission_rules WHERE earner_id = ? LIMIT 1').get(u.id),
+  // Styr om menyvalet Statistik visas: provisionsregler eller konsulter att vara BM för.
+  has_stats:
+    !!db.prepare('SELECT 1 FROM commission_rules WHERE earner_id = ? LIMIT 1').get(u.id) ||
+    !!db.prepare('SELECT 1 FROM users WHERE bm_id = ? AND active = 1 LIMIT 1').get(u.id),
 });
 
 export function registerAuth({ db, router }) {

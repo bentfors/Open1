@@ -9,6 +9,7 @@ const SCHEMA = {
   mileage_rate: f.num({ required: true, min: 0, max: 100, label: 'Milersättning (kr/km)' }),
   tb_cost_basis: f.oneOf(['worked', 'billable'], { label: 'Kostnad i TB' }),
   bench_cap_hours: f.num({ nullable: true, min: 0, max: 100000, label: 'Gräns för odebiterbar tid' }),
+  forecast_utilization: f.num({ required: true, min: 1, max: 100, label: 'Beläggning i prognoser' }),
 };
 
 export function registerSettings({ db, router }) {

@@ -1,11 +1,12 @@
 import { get, post, put, patch, del } from '../api.js';
-import { h, fmtMoney, fmtNum, fmtHours, toast, editDialog, confirmDialog, openDialog, dataTable, optionList, buildForm, add, setKids } from '../dom.js';
+import { h, add, setKids, fmtMoney, fmtNum, fmtHours, fmtDate, fmtSpan, fmtDaysLeft, toast, editDialog, confirmDialog, openDialog, dataTable, optionList, buildForm, localToday } from '../dom.js';
 import { state } from '../state.js';
 
 const TABS = [
   ['anvandare', 'Användare'],
   ['kunder', 'Kunder'],
   ['projekt', 'Projekt'],
+  ['avtal', 'Avtal'],
   ['kategorier', 'Kategorier'],
   ['provision', 'Provision'],
   ['franvaro', 'Frånvaro'],
@@ -43,7 +44,14 @@ async function usersTab(root) {
   };
 
   async function reload() {
-    const { users } = await refs();
+    const [{ users }, employments, assignments] = await Promise.all([refs(), get('/api/employments'), get('/api/assignments')]);
+    const now = localToday();
+    // Aktuell anställning: den som gäller idag, annars den senaste.
+    const employmentOf = (id) => {
+      const list = employments.filter((e) => e.user_id === id);
+      return list.find((e) => e.start_date <= now && (!e.end_date || e.end_date >= now)) ?? list[0];
+    };
+    const assignmentsOf = (id) => assignments.filter((a) => a.user_id === id && (!a.end_date || a.end_date >= now)).sort((a, b) => a.start_date.localeCompare(b.start_date));
     setKids(box, 
       dataTable({
         rows: users,
@@ -54,6 +62,24 @@ async function usersTab(root) {
           { label: 'Kategori', render: (u) => u.category_name || '' },
           { label: 'BM', render: (u) => u.bm_name || '' },
           { label: 'Chef', render: (u) => u.manager_name || '' },
+          {
+            label: 'Anställd',
+            render: (u) => {
+              const e = employmentOf(u.id);
+              if (!e) return h('span', { class: 'muted' }, '–');
+              return [`sedan ${e.start_date}`, h('div', { class: 'small muted' }, `${fmtSpan(e.start_date, e.end_date && e.end_date < now ? e.end_date : now)}${e.end_date ? ` · till ${e.end_date}` : ''}`)];
+            },
+          },
+          {
+            label: 'Uppdrag',
+            render: (u) => {
+              const list = assignmentsOf(u.id);
+              if (!list.length) return h('span', { class: 'muted' }, '–');
+              const a = list[0];
+              const left = a.end_date ? fmtDaysLeft(Math.round((new Date(`${a.end_date}T00:00:00Z`) - new Date(`${now}T00:00:00Z`)) / 86400000)) : 'löpande';
+              return [a.customer_name, h('div', { class: 'small muted' }, `${a.start_date > now ? `från ${a.start_date}` : left}${list.length > 1 ? ` · +${list.length - 1}` : ''}`)];
+            },
+          },
           { label: 'Timkostnad', num: true, render: (u) => fmtMoney(u.cost_rate) },
           { label: 'Std-pris', num: true, render: (u) => (u.default_bill_rate ? fmtMoney(u.default_bill_rate) : '') },
           { label: 'Tim/vecka', num: true, render: (u) => fmtNum(u.weekly_hours) },
@@ -549,6 +575,138 @@ async function commissionTab(root) {
   await reload();
 }
 
+// ── Avtal ───────────────────────────────────────────────────────────────
+const EMPLOYMENT_TYPES = [
+  { value: 'permanent', label: 'Tillsvidare' },
+  { value: 'fixed_term', label: 'Visstid' },
+  { value: 'probation', label: 'Provanställning' },
+];
+const typeLabel = Object.fromEntries(EMPLOYMENT_TYPES.map((t) => [t.value, t.label]));
+const dayDiff = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000);
+
+async function contractsTab(root) {
+  const now = localToday();
+  let showEnded = false;
+  const warnBox = h('div');
+  const assignBox = h('div', { class: 'card flush' });
+  const empBox = h('div', { class: 'card flush' });
+
+  const period = (x) => `${x.start_date} – ${x.end_date ?? 'löpande'}`;
+  const length = (x) => (x.start_date > now ? `startar om ${fmtSpan(now, x.start_date)}` : fmtSpan(x.start_date, x.end_date && x.end_date < now ? x.end_date : now));
+  const left = (x) => (x.end_date ? fmtDaysLeft(dayDiff(now, x.end_date)) : 'löpande');
+  const isOver = (x) => x.end_date && x.end_date < now;
+
+  async function reload() {
+    const [assignments, employments, warnings] = await Promise.all([get('/api/assignments'), get('/api/employments'), get('/api/contracts/warnings')]);
+    setKids(warnBox, warnings.length ? h('div', { class: 'alert warn' }, 'Att se över:', h('ul', { class: 'warn-list' }, warnings.map((w) => h('li', {}, w.text)))) : null);
+
+    setKids(
+      assignBox,
+      h('div', { class: 'group-head' }, 'Uppdrag', h('span', { class: 'spacer' }), actionBtn('+ Nytt uppdrag', () => guarded(() => editAssignment(null)))),
+      dataTable({
+        rows: assignments.filter((a) => showEnded || !isOver(a)),
+        empty: 'Inga uppdrag registrerade. Lägg till dem så kan prognoserna räkna.',
+        rowClass: (a) => (isOver(a) ? 'inactive' : ''),
+        columns: [
+          { label: 'Konsult', render: (a) => a.user_name },
+          { label: 'Kund', render: (a) => [a.customer_name, a.project_code || a.title ? h('div', { class: 'small muted' }, [a.project_code, a.title].filter(Boolean).join(' · ')) : null] },
+          { label: 'Period', render: (a) => period(a), class: 'nowrap' },
+          { label: 'Längd', render: (a) => length(a), class: 'nowrap' },
+          { label: 'Kvar', render: (a) => left(a), class: 'nowrap' },
+          { label: 'Timpris', num: true, render: (a) => fmtMoney(a.hourly_rate) },
+          { label: 'Tim/vecka', num: true, render: (a) => fmtNum(a.hours_per_week) },
+          { label: '', class: 'actions', render: (a) => [actionBtn('Ändra', () => guarded(() => editAssignment(a))), ' ', actionBtn('Ta bort', () => remove('assignments', a.id, `uppdraget för ${a.user_name}`), 'danger')] },
+        ],
+      }),
+    );
+
+    setKids(
+      empBox,
+      h('div', { class: 'group-head' }, 'Anställningar', h('span', { class: 'spacer' }), actionBtn('+ Ny anställning', () => guarded(() => editEmployment(null)))),
+      dataTable({
+        rows: employments.filter((e) => showEnded || !isOver(e)),
+        empty: 'Inga anställningar registrerade. Personer utan anställningsavtal antas vara anställda tillsvidare i prognoserna.',
+        rowClass: (e) => (isOver(e) ? 'inactive' : ''),
+        columns: [
+          { label: 'Person', render: (e) => e.user_name },
+          { label: 'Typ', render: (e) => typeLabel[e.type] },
+          { label: 'Period', render: (e) => period(e), class: 'nowrap' },
+          { label: 'Anställd i', render: (e) => length(e), class: 'nowrap' },
+          { label: 'Kvar', render: (e) => left(e), class: 'nowrap' },
+          { label: 'Uppsägning', num: true, render: (e) => (e.notice_months ? `${e.notice_months} mån` : '') },
+          { label: '', class: 'actions', render: (e) => [actionBtn('Ändra', () => guarded(() => editEmployment(e))), ' ', actionBtn('Ta bort', () => remove('employments', e.id, `anställningen för ${e.user_name}`), 'danger')] },
+        ],
+      }),
+    );
+  }
+
+  async function remove(kind, id, what) {
+    await guarded(async () => {
+      if (!(await confirmDialog(`Ta bort ${what}?`, { confirmLabel: 'Ta bort', danger: true }))) return;
+      await del(`/api/${kind}/${id}`);
+      await reload();
+    });
+  }
+
+  async function editAssignment(existing) {
+    const [users, customers, projects] = await Promise.all([get('/api/users'), get('/api/customers'), get('/api/projects')]);
+    editDialog({
+      title: existing ? 'Ändra uppdrag' : 'Nytt uppdrag',
+      wide: true,
+      values: existing ?? { hours_per_week: 40 },
+      fields: [
+        { name: 'user_id', label: 'Konsult', type: 'select', options: optionList(users.filter((u) => u.active || u.id === existing?.user_id), { label: personLabel }), required: true },
+        { name: 'customer_id', label: 'Kund', type: 'select', options: optionList(customers.filter((c) => c.active || c.id === existing?.customer_id)), required: true },
+        { name: 'project_id', label: 'Projekt (valfritt)', type: 'select', options: optionList(projects.filter((p) => p.status === 'active' || p.id === existing?.project_id), { label: (p) => `${p.customer_name} › ${p.code} ${p.name}`, blank: '(inget)' }), full: true },
+        { name: 'title', label: 'Roll eller benämning', maxlength: 150, full: true },
+        { name: 'start_date', label: 'Startdatum', type: 'date', required: true },
+        { name: 'end_date', label: 'Slutdatum (tomt = löpande)', type: 'date', nullable: true },
+        { name: 'hourly_rate', label: 'Timpris (kr/tim)', type: 'number', step: '1', min: '0', required: true },
+        { name: 'hours_per_week', label: 'Timmar per vecka', type: 'number', step: '0.5', min: '0.5', max: '80', required: true, hint: 'Samtidiga uppdrag får tillsammans inte överstiga personens arbetstid.' },
+        { name: 'notes', label: 'Anteckningar', type: 'textarea', maxlength: 1000, full: true },
+      ],
+      onSave: async (v) => {
+        if (existing) await patch(`/api/assignments/${existing.id}`, v);
+        else await post('/api/assignments', v);
+        toast('Uppdraget är sparat.', 'ok');
+        await reload();
+      },
+    });
+  }
+
+  async function editEmployment(existing) {
+    const users = await get('/api/users');
+    editDialog({
+      title: existing ? 'Ändra anställning' : 'Ny anställning',
+      values: existing ?? { type: 'permanent', notice_months: 3 },
+      fields: [
+        { name: 'user_id', label: 'Person', type: 'select', options: optionList(users.filter((u) => u.active || u.id === existing?.user_id), { label: personLabel }), required: true, full: true },
+        { name: 'type', label: 'Typ', type: 'select', options: EMPLOYMENT_TYPES },
+        { name: 'notice_months', label: 'Uppsägningstid (månader)', type: 'number', step: '1', min: '0', max: '24' },
+        { name: 'start_date', label: 'Startdatum', type: 'date', required: true },
+        { name: 'end_date', label: 'Slutdatum (tomt = tillsvidare)', type: 'date', nullable: true, hint: 'Visstidsanställningar måste ha slutdatum.' },
+        { name: 'notes', label: 'Anteckningar', type: 'textarea', maxlength: 1000, full: true },
+      ],
+      onSave: async (v) => {
+        const body = { ...v, notice_months: v.notice_months ?? 0 };
+        if (existing) await patch(`/api/employments/${existing.id}`, body);
+        else await post('/api/employments', body);
+        toast('Anställningen är sparad.', 'ok');
+        await reload();
+      },
+    });
+  }
+
+  add(
+    root,
+    h('div', { class: 'row between' }, h('div', {}, h('h2', {}, 'Avtal'), h('p', { class: 'muted' }, 'Anställningar och uppdrag. Underlag för prognoserna under Statistik.')), h('label', { class: 'small row' }, h('input', { type: 'checkbox', onchange: (e) => { showEnded = e.target.checked; reload(); } }), 'Visa avslutade')),
+    warnBox,
+    assignBox,
+    empBox,
+  );
+  await reload();
+}
+
 // ── Frånvaro ────────────────────────────────────────────────────────────
 async function absenceTab(root) {
   let box;
@@ -609,6 +767,16 @@ async function settingsTab(root) {
       hint: 'En konsult utan debiterbar tid belastar provisionsunderlaget bara de första så här många timmarna i sträck. Därefter räknas 0 tills hen har debiterbar tid igen. Lämna tomt för ingen gräns.',
       full: true,
     },
+    {
+      name: 'forecast_utilization',
+      label: 'Beläggning i prognoser (%)',
+      type: 'number',
+      step: '1',
+      min: '1',
+      max: '100',
+      required: true,
+      hint: 'Andel av arbetsdagarna som räknas som arbetade, efter semester, sjukdom och helgdagar. Röda dagar räknas inte av var för sig.',
+    },
   ];
   const form = buildForm(fields, s);
   add(root, 
@@ -640,5 +808,5 @@ export async function renderAdmin(root, params) {
   );
   const body = h('div', { class: 'stack' });
   add(root, body);
-  await { anvandare: usersTab, kunder: customersTab, projekt: projectsTab, kategorier: categoriesTab, provision: commissionTab, franvaro: absenceTab, installningar: settingsTab }[active](body);
+  await { anvandare: usersTab, kunder: customersTab, projekt: projectsTab, avtal: contractsTab, kategorier: categoriesTab, provision: commissionTab, franvaro: absenceTab, installningar: settingsTab }[active](body);
 }

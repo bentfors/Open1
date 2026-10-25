@@ -10,6 +10,7 @@ import { renderReports } from './views/reports.js';
 import { renderAdmin } from './views/admin.js';
 import { renderAccount } from './views/account.js';
 import { renderBilling } from './views/billing.js';
+import { renderStats } from './views/stats.js';
 
 const app = document.getElementById('app');
 
@@ -18,6 +19,7 @@ const ROUTES = {
   utlagg: { label: 'Utlägg', view: renderExpenses },
   korjournal: { label: 'Körjournal', view: renderMileage },
   attest: { label: 'Attest', view: renderApprovals, badge: true },
+  statistik: { label: 'Statistik', view: renderStats, stats: true },
   rapporter: { label: 'Rapporter', view: renderReports },
   fakturering: { label: 'Fakturering', view: renderBilling, admin: true },
   admin: { label: 'Admin', view: renderAdmin, admin: true },
@@ -35,7 +37,7 @@ function currentRoute() {
 function buildNav(active) {
   const nav = h('nav', { class: 'nav', 'aria-label': 'Huvudmeny' });
   for (const [name, r] of Object.entries(ROUTES)) {
-    if (r.hidden || (r.admin && !isAdmin())) continue;
+    if (r.hidden || (r.admin && !isAdmin()) || (r.stats && !isAdmin() && !state.user.has_stats)) continue;
     const link = h('a', { href: `#/${name}`, 'aria-current': name === active ? 'page' : null }, r.label);
     if (r.badge) {
       const badge = h('span', { class: `badge ${state.approvalCount ? '' : 'hidden'}` }, String(state.approvalCount));

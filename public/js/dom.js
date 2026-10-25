@@ -319,3 +319,46 @@ export const optionList = (items, { value = (i) => i.id, label = (i) => i.name, 
   ...(blank !== undefined ? [{ value: null, label: blank }] : []),
   ...items.map((i) => ({ value: value(i), label: label(i) })),
 ];
+
+// ── SVG, tidsspann och kompakta belopp ──────────────────────────────────
+const SVG_NS = 'http://www.w3.org/2000/svg';
+export function s(tag, attrs = {}, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v);
+  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return el;
+}
+
+// Hela månader mellan två datum, eller dagar om det är kortare. "6 år 2 mån", "5 mån", "12 dagar".
+export function fmtSpan(from, to) {
+  const a = new Date(`${from}T00:00:00Z`);
+  const b = new Date(`${to}T00:00:00Z`);
+  let months = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth()) - (b.getUTCDate() < a.getUTCDate() ? 1 : 0);
+  if (months < 0) months = 0;
+  if (months >= 12) {
+    const rest = months % 12;
+    return `${Math.floor(months / 12)} år${rest ? ` ${rest} mån` : ''}`;
+  }
+  if (months >= 1) return `${months} mån`;
+  const days = Math.max(0, Math.round((b - a) / 86400000));
+  return `${days} ${days === 1 ? 'dag' : 'dagar'}`;
+}
+
+export function fmtDaysLeft(days) {
+  if (days === null || days === undefined) return 'löpande';
+  if (days < 0) return 'avslutat';
+  if (days === 0) return 'slutar idag';
+  if (days <= 60) return `${days} dagar kvar`;
+  return `${Math.round(days / 30.4)} mån kvar`;
+}
+
+// 12 340 → "12,3 tkr", 1 200 000 → "1,2 mkr"
+export function fmtK(n) {
+  const a = Math.abs(n);
+  const sign = n < 0 ? '−' : '';
+  if (a >= 1e6) return `${sign}${fmtNum(a / 1e6, 1)} mkr`;
+  if (a >= 1e3) return `${sign}${fmtNum(a / 1e3, 1)} tkr`;
+  return `${sign}${fmtNum(a, 0)}`;
+}
+
+export const shortMonth = (ym) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'UTC', month: 'short' }).format(new Date(`${ym}-01T00:00:00Z`)).replace('.', '');

@@ -6,6 +6,7 @@ export const SETTING_DEFAULTS = {
   mileage_rate: '2.5',
   tb_cost_basis: 'worked',
   bench_cap_hours: '300',
+  forecast_utilization: '90',
 };
 
 export function getSettings(db) {
@@ -14,6 +15,7 @@ export function getSettings(db) {
   out.mileage_rate = Number(out.mileage_rate);
   // Tomt betyder ingen gräns.
   out.bench_cap_hours = out.bench_cap_hours === '' ? null : Number(out.bench_cap_hours);
+  out.forecast_utilization = Number(out.forecast_utilization);
   return out;
 }
 

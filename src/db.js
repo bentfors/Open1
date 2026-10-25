@@ -254,6 +254,37 @@ export const MIGRATIONS = [
   // 3: BM som attesterar alla en konsults tid.
   `ALTER TABLE users ADD COLUMN bm_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
    CREATE INDEX users_bm ON users(bm_id);`,
+
+  // 4: avtalsregister. Anställningar och uppdrag, som underlag för prognoser.
+  `CREATE TABLE employments (
+     id           INTEGER PRIMARY KEY,
+     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     type         TEXT NOT NULL DEFAULT 'permanent' CHECK (type IN ('permanent','fixed_term','probation')),
+     start_date   TEXT NOT NULL,
+     end_date     TEXT,
+     notice_months INTEGER NOT NULL DEFAULT 0 CHECK (notice_months >= 0 AND notice_months <= 24),
+     notes        TEXT NOT NULL DEFAULT '',
+     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+     CHECK (end_date IS NULL OR end_date >= start_date)
+   );
+   CREATE INDEX employments_user ON employments(user_id);
+
+   CREATE TABLE assignments (
+     id             INTEGER PRIMARY KEY,
+     user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     customer_id    INTEGER NOT NULL REFERENCES customers(id),
+     project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+     title          TEXT NOT NULL DEFAULT '',
+     start_date     TEXT NOT NULL,
+     end_date       TEXT,
+     hourly_rate    REAL NOT NULL CHECK (hourly_rate >= 0),
+     hours_per_week REAL NOT NULL CHECK (hours_per_week > 0 AND hours_per_week <= 80),
+     notes          TEXT NOT NULL DEFAULT '',
+     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+     CHECK (end_date IS NULL OR end_date >= start_date)
+   );
+   CREATE INDEX assignments_user ON assignments(user_id);
+   CREATE INDEX assignments_customer ON assignments(customer_id);`,
 ];
 
 export function openDb(file) {

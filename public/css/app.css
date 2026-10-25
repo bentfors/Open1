@@ -370,5 +370,26 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.8); }
   .form-grid { grid-template-columns: 1fr; }
   .week-title { min-width: 0; }
   .card { padding: 16px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi { padding: 14px; }
+  .kpi .value { font-size: 1.45rem; white-space: nowrap; }
   table.grid td.label, table.grid th.label { position: sticky; left: 0; background: var(--surface); z-index: 1; min-width: 150px; }
 }
+
+/* ── Statistik ──────────────────────────────────────────────────────── */
+.chart { width: 100%; min-width: 640px; height: auto; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; font-family: var(--font); }
+.chart .grid-line { stroke: var(--border); stroke-width: 1; }
+.chart .bar-actual { fill: var(--accent); }
+.chart .bar-forecast { fill: var(--accent); fill-opacity: 0.28; stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 2; }
+.chart .now-line { stroke: var(--accent-pale); stroke-width: 1; stroke-dasharray: 4 3; }
+.chart .now-label { fill: var(--accent-pale); }
+.chart-legend { display: flex; gap: 18px; padding: 0 20px 16px; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted); }
+.chart-legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--accent); }
+.chart-legend .l-actual::before { background: var(--accent); }
+.chart-legend .l-forecast::before { background: rgba(178, 170, 82, 0.28); border-style: dashed; }
+.result-big { font-size: 2.2rem; font-weight: 300; color: var(--accent-pale); letter-spacing: -0.01em; }
+.scenario-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 14px; align-items: end; }
+.warn-list { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+.warn-list li { margin: 0.15rem 0; }
+.pos { color: var(--ok); }

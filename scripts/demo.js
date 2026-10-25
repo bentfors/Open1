@@ -79,6 +79,21 @@ if (fresh) {
   await admin.post('/api/commission-rules', { earner_id: chef.id, name: 'Chefsbonus per konsult i uppdrag', kind: 'per_consultant', period: 'month', amount: 500, min_hours: 8, category_ids: [cats['Konsult Talent'], cats['Konsult Next'], cats['Konsult Expert']] });
   await admin.post('/api/commission-rules', { earner_id: chef.id, name: 'Chef, trappa på antal konsulter', kind: 'tb_tiered', period: 'quarter', source_ids: [k1.id, k2.id, k3.id], tiers: [{ min: 0, percent: 2 }, { min: 3, percent: 4 }] });
 
+  // Avtalsregister: anställningar och uppdrag, som underlag för prognoserna under Statistik.
+  const emp = (u, start, type = 'permanent') => admin.post('/api/employments', { user_id: u.id, start_date: start, type, notice_months: 3 });
+  await emp(k1, '2021-03-01');
+  await emp(k2, '2023-08-15');
+  await emp(k3, '2025-02-01');
+  const job = (u, customer_id, project_id, title, start_date, end_date, hourly_rate, hours_per_week) =>
+    admin.post('/api/assignments', { user_id: u.id, customer_id, project_id, title, start_date, end_date, hourly_rate, hours_per_week });
+  const y = new Date().getFullYear();
+  await job(k1, kund1, p1, 'Teknisk arkitekt', `${y}-01-01`, `${y + 1}-03-31`, 1450, 30);
+  await job(k1, kund2, p3, 'Integrationsspecialist', `${y}-01-01`, `${y + 1}-06-30`, 1150, 10);
+  await job(k2, kund1, p1, 'Utvecklare', `${y}-01-01`, `${y + 1}-01-31`, 1250, 20);
+  await job(k2, kund1, p2, 'Förvaltare', `${y}-01-01`, `${y}-12-19`, 1050, 15);
+  await job(k3, kund1, p2, 'Förvaltare', `${y}-01-01`, `${y + 1}-02-28`, 1050, 25);
+  await job(k3, kund2, p3, 'Testare', `${y}-01-01`, `${y}-11-30`, 1150, 10);
+
   const internal = (await admin.get('/api/my/targets')).activities.find((t) => t.code === 'INT-1' && t.activity_name === 'Utbildning').activity_id;
   const plan = [
     [k1, [[a1, 6], [a3, 2]]],

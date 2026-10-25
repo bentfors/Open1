@@ -1,7 +1,14 @@
 import { config } from './config.js';
 
+// Tester kan fixera dagens datum. Aldrig i drift.
+let todayOverride = null;
+export function setTodayForTests(date) {
+  todayOverride = date;
+}
+
 // Dagens datum i konfigurerad tidszon som ÅÅÅÅ-MM-DD.
 export function today() {
+  if (todayOverride) return todayOverride;
   return new Intl.DateTimeFormat('sv-SE', {
     timeZone: config.timezone,
     year: 'numeric',
@@ -81,4 +88,15 @@ export function monthWindows(start, end) {
     out.push({ start: s < start ? start : s, end: e > end ? end : e });
   }
   return out;
+}
+
+// Första dagen i månaden n månader efter månaden som datumet ligger i (n kan vara negativt).
+export function addMonths(dateStr, n) {
+  const dt = toUtc(monthStart(dateStr));
+  dt.setUTCMonth(dt.getUTCMonth() + n, 1);
+  return dt.toISOString().slice(0, 10);
+}
+
+export function daysBetween(a, b) {
+  return Math.round((toUtc(b) - toUtc(a)) / 86400000);
 }
