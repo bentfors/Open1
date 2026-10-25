@@ -5,13 +5,16 @@ import { state } from '../state.js';
 const KIND = { income: 'Inkomst', expense: 'Utgift', transfer: 'Överföring' };
 
 export async function renderSettings(root) {
+  const household = h('div');
   const cats = h('div');
   const rules = h('div');
   const pw = passwordCard();
   setKids(
     root,
     h('h1', {}, 'Inställningar'),
-    h('h2', {}, 'Kategorier'),
+    h('h2', {}, 'Hushåll och antaganden'),
+    household,
+    h('h2', { class: 'mt-l' }, 'Kategorier'),
     cats,
     h('h2', { class: 'mt-l' }, 'Regler för automatisk kategorisering'),
     rules,
@@ -80,7 +83,56 @@ export async function renderSettings(root) {
     );
   }
 
-  await Promise.all([loadCats(), loadRules()]);
+  async function loadHousehold() {
+    const hh = await get('/api/household');
+    state.householdSize = hh.members.length;
+    const a = hh.assumptions;
+    const fields = [['return_rate', 'Avkastning på placeringar (% per år)'], ['cash_rate', 'Ränta på kontanter (% per år)'], ['fixed_growth', 'Värdeutveckling övriga tillgångar (% per år)'], ['inflation', 'Inflation (% per år)']];
+    const inputs = Object.fromEntries(fields.map(([k]) => [k, h('input', { id: `as-${k}`, type: 'number', step: 'any', value: a[k] })]));
+    const code = h('div');
+    setKids(
+      household,
+      h('div', { class: 'card' },
+        h('h3', {}, hh.name),
+        h('p', {}, 'Medlemmar: ', hh.members.map((m) => m.name).join(', '), '.'),
+        h('p', { class: 'muted small' }, 'Hushållet delar kategorier, regler, budget, mål och scenarier. Konton är delade om de inte markerats som privata, och privata konton syns bara för ägaren. Alla medlemmar kan ändra det som är delat.'),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', type: 'button', onclick: async () => { const r = await post('/api/household/invite'); setKids(code, h('div', { class: 'alert' }, `Inbjudningskod (visas bara nu, gäller en person i ${r.days} dagar): `, h('strong', {}, r.code))); } }, 'Bjud in någon'),
+          h('button', { class: 'btn', type: 'button', onclick: joinDialog }, 'Gå med via kod'),
+          hh.members.length > 1 ? h('button', { class: 'btn danger', type: 'button', onclick: leave }, 'Lämna hushållet') : null),
+        code),
+      h('div', { class: 'card' },
+        h('h3', {}, 'Antaganden för prognoser'),
+        h('p', { class: 'muted small' }, 'Det här är gissningar om framtiden, inte fakta. De styr alla scenarier och mål. Ta försiktiga tal: avkastning på aktier och fonder varierar mycket mellan år.'),
+        h('div', { class: 'form-grid' }, fields.map(([k, label]) => h('div', { class: 'field' }, h('label', { for: `as-${k}` }, label), inputs[k]))),
+        h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+          const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, Number(el.value.replace(',', '.'))]));
+          try { await patch('/api/household', body); toast('Antagandena är sparade.', 'ok'); } catch (e) { toast(e.message, 'error'); }
+        } }, 'Spara antaganden')),
+    );
+  }
+
+  function joinDialog() {
+    editDialog({
+      title: 'Gå med i ett hushåll',
+      fields: [{ name: 'code', label: 'Inbjudningskod', required: true, full: true, hint: 'Dina konton, kategorier, mål och scenarier följer med. Din nuvarande budget ersätts av hushållets.' }],
+      values: {},
+      saveLabel: 'Gå med',
+      onSave: async (v) => {
+        await post('/api/household/join', { code: v.code });
+        toast('Du är med i hushållet.', 'ok');
+        location.reload();
+      },
+    });
+  }
+
+  async function leave() {
+    if (!(await confirmDialog('Du får ett eget hushåll med dina konton. Budget, mål och scenarier stannar kvar hos de andra. Delade konton du äger följer med dig.', { confirmLabel: 'Lämna', danger: true }))) return;
+    await post('/api/household/leave');
+    location.reload();
+  }
+
+  await Promise.all([loadHousehold(), loadCats(), loadRules()]);
 }
 
 function passwordCard() {

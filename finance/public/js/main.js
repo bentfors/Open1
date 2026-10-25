@@ -8,6 +8,9 @@ import { renderTransactions } from './views/transactions.js';
 import { renderHoldings } from './views/holdings.js';
 import { renderIncome, renderBalance } from './views/reports.js';
 import { renderSettings } from './views/settings.js';
+import { renderBudget } from './views/budget.js';
+import { renderGoals } from './views/goals.js';
+import { renderScenarios } from './views/scenarios.js';
 
 const app = document.getElementById('app');
 
@@ -16,8 +19,11 @@ const ROUTES = {
   transaktioner: { label: 'Transaktioner', view: renderTransactions },
   konton: { label: 'Konton', view: renderAccounts },
   innehav: { label: 'Innehav', view: renderHoldings },
+  budget: { label: 'Budget', view: renderBudget },
   resultat: { label: 'Resultat', view: renderIncome },
   balans: { label: 'Balans', view: renderBalance },
+  mal: { label: 'Mål', view: renderGoals },
+  scenarier: { label: 'Scenarier', view: renderScenarios },
   installningar: { label: 'Inställningar', view: renderSettings, hidden: true },
 };
 
@@ -37,6 +43,13 @@ function buildNav(active) {
   return nav;
 }
 
+// Syns bara när hushållet har fler än en medlem.
+function scopeToggle() {
+  if (state.householdSize < 2) return null;
+  const sel = h('select', { 'aria-label': 'Vy', onchange: () => ((state.scope = sel.value), route()) }, h('option', { value: 'household', selected: state.scope === 'household' }, 'Hushållet'), h('option', { value: 'me', selected: state.scope === 'me' }, 'Bara mina'));
+  return sel;
+}
+
 function renderShell() {
   clear(app);
   const mount = h('main', { id: 'main' });
@@ -51,7 +64,7 @@ function renderShell() {
         { class: 'topbar-inner' },
         h('a', { class: 'brand', href: '#/oversikt', 'aria-label': 'Min ekonomi, startsidan' }, 'Min ekonomi'),
         nav,
-        h('div', { class: 'userbox' }, h('a', { class: 'who muted', href: '#/installningar' }, state.user.name), h('button', { class: 'btn sm', type: 'button', onclick: logout }, 'Logga ut')),
+        h('div', { class: 'userbox' }, scopeToggle(), h('a', { class: 'who muted', href: '#/installningar' }, state.user.name), h('button', { class: 'btn sm', type: 'button', onclick: logout }, 'Logga ut')),
       ),
     ),
     mount,
@@ -83,7 +96,7 @@ function showLogin() {
   state.user = null;
   location.hash = '';
   renderAuth(app, async () => {
-    state.user = (await get('/api/auth/me')).user;
+    await loadMe();
     start();
   });
 }
@@ -104,9 +117,13 @@ onApiEvent({
   },
 });
 
-get('/api/auth/me')
-  .then((me) => {
-    state.user = me.user;
-    start();
-  })
+async function loadMe() {
+  const me = await get('/api/auth/me');
+  state.user = me.user;
+  state.householdSize = me.household_size;
+  if (me.household_size < 2) state.scope = 'household';
+}
+
+loadMe()
+  .then(start)
   .catch(() => showLogin());

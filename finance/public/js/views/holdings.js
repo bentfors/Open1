@@ -89,12 +89,13 @@ function holdingDialog(holding, onDone) {
       { name: 'currency', label: 'Valuta', maxlength: 3 },
       { name: 'manual_price', label: 'Manuell kurs (i valutan)', type: 'number', step: 'any', min: 0, hint: 'Används bara vid manuell kurs.' },
       { name: 'cost_basis', label: 'Anskaffningsvärde totalt (kr, valfritt)' },
+      { name: 'shared', label: 'Delat med hushållet (privat om det ligger på ett privat konto)', type: 'checkbox', full: true, default: true },
     ],
-    values: holding ? { ...holding, cost_basis: holding.cost_basis ? String(holding.cost_basis / 100).replace('.', ',') : '', manual_price: holding.manual_price ?? '' } : { price_mode: mode, currency: 'SEK' },
+    values: holding ? { ...holding, shared: !!holding.shared, cost_basis: holding.cost_basis ? String(holding.cost_basis / 100).replace('.', ',') : '', manual_price: holding.manual_price ?? '' } : { price_mode: mode, currency: 'SEK' },
     onSave: async (v) => {
       const cost = parseKr(v.cost_basis);
       if (Number.isNaN(cost)) throw new Error('Anskaffningsvärdet måste vara ett belopp i kronor.');
-      const body = { name: v.name, price_mode: v.price_mode, symbol: v.symbol, quantity: v.quantity, currency: (v.currency || 'SEK').toUpperCase(), cost_basis: cost, manual_price: v.price_mode === 'manual' ? v.manual_price : null };
+      const body = { name: v.name, price_mode: v.price_mode, symbol: v.symbol, quantity: v.quantity, currency: (v.currency || 'SEK').toUpperCase(), cost_basis: cost, manual_price: v.price_mode === 'manual' ? v.manual_price : null, shared: v.shared };
       if (holding) await patch(`/api/holdings/${holding.id}`, body);
       else await post('/api/holdings', body);
       toast('Sparat.', 'ok');

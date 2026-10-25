@@ -1,3 +1,5 @@
+import { state } from './state.js';
+
 export class ApiError extends Error {
   constructor(status, message, code) {
     super(message);
@@ -10,6 +12,8 @@ const handlers = { unauthenticated: () => {}, passwordChange: () => {} };
 export const onApiEvent = (h) => Object.assign(handlers, h);
 
 export async function api(method, url, body) {
+  // Vyn "bara mina" gäller alla anrop utom inloggning. Servern ignorerar parametern där den inte betyder något.
+  if (state.scope === 'me' && !url.startsWith('/api/auth')) url += `${url.includes('?') ? '&' : '?'}scope=me`;
   let res;
   try {
     res = await fetch(url, {

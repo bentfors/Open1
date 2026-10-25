@@ -1,6 +1,6 @@
 # Min ekonomi
 
-Privatekonomi med inloggning, innehav till aktuell kurs, inklistrade kontoutdrag, resultat- och balansrapport. Version 1. Månadsrapport och rådgivarvy är inte byggda än, se [Nästa steg](#nästa-steg).
+Privatekonomi med inloggning, innehav till aktuell kurs, inklistrade kontoutdrag, resultat- och balansrapport. Version 2: hushåll, budget, mål och scenarier. Månadsrapport och rådgivarvy är inte byggda än, se [Nästa steg](#nästa-steg).
 
 Inga externa beroenden. Kräver Node.js 22.13 eller senare (SQLite ingår i Node).
 
@@ -37,7 +37,21 @@ npm test
 
 **Dina data.** Export av allt som JSON och radering av kontot (kräver lösenord).
 
+## Hushåll, budget, mål och scenarier
+
+**Hushåll.** Alla konton hör till ett hushåll. Invänd inte mot standardläget: du är ensam i ditt eget. Bjud in en annan person under Inställningar (engångskod, sju dagar), så delar ni kategorier, regler, budget, mål och scenarier. Konton är delade om de inte markerats privata. Privata konton, deras transaktioner och innehav syns bara för ägaren, och mål som länkar dem räknar dem inte för andra. Alla medlemmar kan importera till och ändra delade konton, men bara ägaren ändrar typ, delning och lånevillkor eller tar bort kontot. Med flera medlemmar finns en växel för vyn *Hushållet* eller *Bara mina*. Att gå med slår ihop kategorier på namn och ersätter din gamla budget. Att lämna ger dig ett eget hushåll med kopior av kategorierna.
+
+**Budget.** Per kategori och månad, för inkomster och utgifter. Förslaget bygger på de tre senaste avslutade månaderna: typvärde (median) så att en engångsresa inte slår igenom, utgifter avrundade uppåt till hundralapp. Månader före din första transaktion räknas inte som noll. Förslaget sparas inte förrän du bekräftar. Uppföljningen visar budget mot utfall per kategori och månad, och visar utfall utan budget.
+
+**Mål.** Målbelopp, datum, vad du sparar per månad och förväntad avkastning. "Sparat" är ett belopp du anger plus saldo och innehav på konton du länkar. Beräknar vad som krävs per månad, om du är på rätt väg och när målet nås, och jämför summan med månadsöverskottet.
+
+**Scenarier.** Händelser: köp (med kontantinsats, lån, amortering, löpande kostnader, värdeutveckling och valfri försäljning), engångsbelopp och löpande ändringar. Motorn räknar månad för månad från din ekonomi idag (kassa, placeringar, skulder med ränta) och din budget, och jämför med att inte göra något. Stresstest med två procentenheter högre ränta, underskott när pengarna tar slut, skuldkvot, varning för bolån över 85 % av priset. Antagandena (avkastning, ränta på kontanter, värdeutveckling, inflation) sätts under Inställningar och är gissningar.
+
 ## Begränsningar du bör känna till
+
+- **Scenarier är räkneövningar, inte förutsägelser.** Resultatet bestäms av antagandena. Skatt, ränteavdrag, bidrag och bankens kreditprövning är inte modellerade, och inkomsten är det som sätts in på kontot. Skuldkvoten är räknad på inkomst efter skatt och går därför inte att jämföra med bankens.
+- **Standardvärdena för hus och båt är gissningar** (ränta, amorteringstid, driftkostnad, värdeutveckling). Byt mot dina egna.
+- **Prognosen gäller hushållet som du ser det.** Delar en partner ett privat konto med dig inte syns det inte i din prognos.
 
 - **Kurskällan är inofficiell.** Yahoos API är inte dokumenterat för den här användningen, kan ändras eller spärra utan förvarning, och villkoren tillåter troligen inte kommersiell vidareförmedling. Duger för personligt bruk. Gör du en tjänst av det här, byt till en licensierad källa. Leverantören är utbytbar (`createPriceService` i `src/prices.js`).
 - **Svenska fonder saknar normalt börssymbol** och måste prissättas manuellt.
@@ -45,6 +59,7 @@ npm test
 - **Ingen kryptering av data i vila.** Databasen är en vanlig SQLite-fil. Använd krypterad disk och säkerhetskopiera filen.
 - **Ingen automatisk bankkoppling.** Kontoutdrag klistras in för hand. Open banking kräver tillstånd (AISP) eller en leverantör som Tink eller Enable Banking.
 - **Inget stöd för separata debet/kredit-kolumner**, bara ett signerat belopp.
+- **Raderar du ditt konto försvinner konton du äger, även delade.** Kategorier och regler stannar hos de andra.
 - **Balansen visar bara idag.** Saldon och värden vid ett tidigare datum räknas inte om, utöver de dagliga ögonblicksbilderna.
 - **Rapporterna är inga redovisningsrapporter.** Låneräntor och avskrivningar bokförs inte automatiskt, och kontantprincipen gäller.
 

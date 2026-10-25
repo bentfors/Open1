@@ -1,5 +1,6 @@
 import { get, post, patch, del } from '../api.js';
 import { h, add, setKids, toast, dataTable, editDialog, confirmDialog, openDialog, fmtSek, fmtSekExact, fmtDate, parseKr } from '../dom.js';
+import { state } from '../state.js';
 
 const LIABILITY = new Set(['loan', 'credit']);
 
@@ -20,7 +21,7 @@ export async function renderAccounts(root) {
           empty: 'Du har inga konton än. Börja med ditt lönekonto.',
           rows: data.items,
           columns: [
-            { label: 'Konto', render: (a) => a.name },
+            { label: 'Konto', render: (a) => h('div', {}, a.name, state.householdSize > 1 ? h('div', { class: 'small muted' }, a.user_id === state.user.id ? 'Du' : a.owner, a.shared ? '' : ' · privat') : null) },
             { label: 'Typ', render: (a) => kinds[a.kind] },
             { label: 'Saldo', num: true, render: (a) => h('span', { class: a.balance < 0 ? 'neg' : '' }, fmtSekExact(a.balance)) },
             { label: 'Transaktioner', num: true, render: (a) => a.tx_count },
@@ -34,7 +35,7 @@ export async function renderAccounts(root) {
                   { class: 'row' },
                   h('button', { class: 'btn sm primary', type: 'button', onclick: () => importDialog(a, load) }, 'Klistra in kontoutdrag'),
                   h('button', { class: 'btn sm', type: 'button', onclick: () => accountDialog(a, load, kinds) }, 'Ändra'),
-                  h('button', { class: 'btn sm danger', type: 'button', onclick: () => remove(a) }, 'Ta bort'),
+                  a.user_id === state.user.id ? h('button', { class: 'btn sm danger', type: 'button', onclick: () => remove(a) }, 'Ta bort') : null,
                 ),
             },
           ],
@@ -56,19 +57,35 @@ export async function renderAccounts(root) {
 
 function accountDialog(account, onDone, kinds) {
   const kindOptions = Object.entries(kinds).map(([value, label]) => ({ value, label }));
+  const mine = !account || account.user_id === state.user.id;
+  const fields = [
+    { name: 'name', label: 'Namn', required: true, maxlength: 80, full: true },
+    ...(mine ? [{ name: 'kind', label: 'Typ', type: 'select', options: kindOptions }] : []),
+    { name: 'balance', label: 'Saldo idag (kr)', hint: 'För lån och kreditkort: skulden som positivt belopp.' },
+    ...(mine
+      ? [
+          { name: 'interest_rate', label: 'Ränta (% per år)', type: 'number', step: 'any', min: 0, hint: 'Bara för lån och kreditkort. Behövs för prognoser.' },
+          { name: 'monthly_amortization', label: 'Amortering per månad (kr)', hint: 'Bara för lån.' },
+          { name: 'shared', label: 'Delad med hushållet (avmarkera för ett privat konto)', type: 'checkbox', full: true, default: true },
+        ]
+      : []),
+  ];
   editDialog({
     title: account ? 'Ändra konto' : 'Nytt konto',
-    fields: [
-      { name: 'name', label: 'Namn', required: true, maxlength: 80, full: true },
-      { name: 'kind', label: 'Typ', type: 'select', options: kindOptions },
-      { name: 'balance', label: 'Saldo idag (kr)', hint: 'För lån och kreditkort: skulden som positivt belopp.', skip: false },
-    ],
-    values: account ? { name: account.name, kind: account.kind, balance: String(Math.abs(account.balance) / 100).replace('.', ',') } : { kind: 'checking', balance: '0' },
+    fields,
+    values: account
+      ? { name: account.name, kind: account.kind, balance: String(Math.abs(account.balance) / 100).replace('.', ','), interest_rate: account.interest_rate ?? '', monthly_amortization: String(account.monthly_amortization / 100).replace('.', ','), shared: !!account.shared }
+      : { kind: 'checking', balance: '0', monthly_amortization: '0', shared: true },
     onSave: async (v) => {
       const kr = parseKr(v.balance);
       if (kr === null || Number.isNaN(kr)) throw new Error('Saldot måste vara ett belopp, till exempel 12 345,50.');
-      const signed = LIABILITY.has(v.kind) ? -Math.abs(kr) : kr;
-      const body = { name: v.name, kind: v.kind, balance: signed };
+      const kind = v.kind ?? account.kind;
+      const body = { name: v.name, balance: LIABILITY.has(kind) ? -Math.abs(kr) : kr };
+      if (mine) {
+        const amort = parseKr(v.monthly_amortization);
+        if (Number.isNaN(amort)) throw new Error('Amorteringen måste vara ett belopp i kronor.');
+        Object.assign(body, { kind, shared: v.shared, interest_rate: v.interest_rate, monthly_amortization: amort ?? 0 });
+      }
       if (account) await patch(`/api/accounts/${account.id}`, body);
       else await post('/api/accounts', body);
       toast('Sparat.', 'ok');
