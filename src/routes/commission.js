@@ -37,7 +37,7 @@ function parseIdList(raw, label) {
 }
 
 export function registerCommission({ db, router }) {
-  router.add('GET', '/api/commission-rules', { auth: 'admin' }, () => listRules(db));
+  router.add('GET', '/api/commission-rules', { auth: 'finance_super' }, () => listRules(db));
 
   // Validerar hela regeln efter sammanslagning med det som redan finns.
   function validate(merged, sources, categories) {

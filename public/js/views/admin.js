@@ -1,6 +1,6 @@
 import { get, post, put, patch, del } from '../api.js';
 import { h, add, setKids, fmtMoney, fmtNum, fmtHours, fmtDate, fmtSpan, fmtDaysLeft, toast, editDialog, confirmDialog, openDialog, dataTable, optionList, buildForm, localToday } from '../dom.js';
-import { state } from '../state.js';
+import { state, isAdmin } from '../state.js';
 
 const TABS = [
   ['anvandare', 'Användare'],
@@ -13,19 +13,22 @@ const TABS = [
   ['installningar', 'Inställningar'],
 ];
 
+// Ekonomi-superuser ser hela administrationen men kan inte ändra något: knapparna som skriver finns inte.
+const canWrite = () => isAdmin();
+
 const personLabel = (u) => (u.category_name ? `${u.name} (${u.category_name})` : u.name);
 
 // Gemensam ram för en listvy: rubrik, "Ny"-knapp och en tabell som kan laddas om.
 function listSection(root, { title, intro, newLabel, onNew }) {
   const box = h('div', { class: 'card flush' });
   add(root, 
-    h('div', { class: 'row between' }, h('div', {}, h('h2', {}, title), intro ? h('p', { class: 'muted' }, intro) : null), newLabel ? h('button', { class: 'btn primary', type: 'button', onclick: onNew }, newLabel) : null),
+    h('div', { class: 'row between' }, h('div', {}, h('h2', {}, title), intro ? h('p', { class: 'muted' }, intro) : null), newLabel && canWrite() ? h('button', { class: 'btn primary', type: 'button', onclick: onNew }, newLabel) : null),
     box,
   );
   return box;
 }
 
-const actionBtn = (label, onclick, cls = '') => h('button', { class: `btn sm ${cls}`, type: 'button', onclick }, label);
+const actionBtn = (label, onclick, cls = '') => (canWrite() ? h('button', { class: `btn sm ${cls}`, type: 'button', onclick }, label) : null);
 
 async function guarded(fn) {
   try {
@@ -318,11 +321,11 @@ async function projectsTab(root) {
               },
             ],
           }),
-          h('div', { class: 'sticky-actions' }, candidate, rate, h('button', { class: 'btn primary', type: 'button', onclick: () => guarded(async () => {
+          canWrite() ? h('div', { class: 'sticky-actions' }, candidate, rate, h('button', { class: 'btn primary', type: 'button', onclick: () => guarded(async () => {
             if (!candidate.value) return;
             await put(`/api/projects/${id}/members/${candidate.value}`, { hourly_rate: rate.value === '' ? null : Number(rate.value) });
             await redraw();
-          }) }, 'Lägg till')),
+          }) }, 'Lägg till')) : null,
         ),
         h(
           'div',
@@ -790,6 +793,7 @@ async function settingsTab(root) {
     },
   ];
   const form = buildForm(fields, s);
+  if (!canWrite()) for (const el of form.el.querySelectorAll('input, select, textarea')) el.disabled = true;
   add(root, 
     h('h2', {}, 'Inställningar'),
     h(
@@ -797,7 +801,7 @@ async function settingsTab(root) {
       { class: 'card' },
       error,
       form.el,
-      h('button', {
+      canWrite() ? h('button', {
         class: 'btn primary',
         type: 'button',
         onclick: () =>
@@ -806,7 +810,7 @@ async function settingsTab(root) {
             state.settings = await patch('/api/settings', { ...v, mileage_rate: v.mileage_rate ?? 0 });
             toast('Inställningarna är sparade.', 'ok');
           }),
-      }, 'Spara'),
+      }, 'Spara') : null,
     ),
   );
 }
@@ -815,6 +819,7 @@ export async function renderAdmin(root, params) {
   const active = TABS.some((t) => t[0] === params[0]) ? params[0] : 'anvandare';
   add(root, 
     h('h1', {}, 'Administration'),
+    canWrite() ? null : h('p', { class: 'muted' }, 'Du har läsrätt här som ekonomi-superuser. Ändringar görs av en administratör.'),
     h('div', { class: 'subnav' }, TABS.map(([id, label]) => h('a', { href: `#/admin/${id}`, 'aria-current': id === active ? 'page' : null }, label))),
   );
   const body = h('div', { class: 'stack' });

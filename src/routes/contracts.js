@@ -30,7 +30,7 @@ export function registerContracts({ db, router }) {
   const userRow = (id) => db.prepare('SELECT id, name, weekly_hours, active FROM users WHERE id = ?').get(id);
 
   // ── Anställningar ─────────────────────────────────────────────────────
-  router.add('GET', '/api/employments', { auth: 'admin' }, () =>
+  router.add('GET', '/api/employments', { auth: 'finance_super' }, () =>
     db
       .prepare(
         `SELECT e.*, u.name AS user_name FROM employments e JOIN users u ON u.id = e.user_id
@@ -71,7 +71,7 @@ export function registerContracts({ db, router }) {
   });
 
   // ── Uppdrag ───────────────────────────────────────────────────────────
-  router.add('GET', '/api/assignments', { auth: 'admin' }, () =>
+  router.add('GET', '/api/assignments', { auth: 'finance_super' }, () =>
     db
       .prepare(
         `SELECT a.*, u.name AS user_name, c.name AS customer_name, p.code AS project_code, p.name AS project_name
@@ -137,7 +137,7 @@ export function registerContracts({ db, router }) {
    * Luckor i registret som gör prognoserna missvisande. Med "konsult" menas här den som har en BM
    * eller ingår i en provisionsregel, eftersom kategorierna kan döpas om fritt.
    */
-  router.add('GET', '/api/contracts/warnings', { auth: 'admin' }, () => {
+  router.add('GET', '/api/contracts/warnings', { auth: 'finance_super' }, () => {
     const now = today();
     const warnings = [];
     const consultants = db

@@ -54,7 +54,7 @@ export function registerUsers({ db, router }) {
       .all(),
   );
 
-  router.add('GET', '/api/users', { auth: 'admin' }, () =>
+  router.add('GET', '/api/users', { auth: 'finance_super' }, () =>
     db
       .prepare(
         `SELECT ${USER_COLUMNS}

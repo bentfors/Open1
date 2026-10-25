@@ -56,11 +56,12 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 | Se projekt och kunder att fakturera, välja rader, skapa fakturaunderlag, CSV | ✔ | ✔ |
 | Upplupet och tidrapporter med pengar för alla | ✔ | ✔ |
 | TB per konsult och provisionsrapporten för alla mottagare (läsa, inte ändra regler) | | ✔ |
+| Läsa hela administrationen (användare, kunder, projekt med team, avtal, provisionsregler, kategorier, inställningar) och allas statistik och prognos | | ✔ |
 | Avskriva och ångra avskrivning | | ✔ |
 | Ångra ett skapat fakturaunderlag | | ✔ |
 | Låsa perioder (Fakturering → Periodlåsning) | | ✔ |
 
-Gränsen går vid sådant som är svårt att ta tillbaka eller som ändrar vad andra får göra. Den är samlad i `isFinance` och `isFinanceSuper` i `src/domain.js` och i vilken rutt som kräver vilken nivå, så den går att flytta. Superuser kan bara ändra periodlåsningen bland inställningarna, resten är administratörens. Administratörer har alltid båda nivåerna.
+Gränsen går vid sådant som är svårt att ta tillbaka eller som ändrar vad andra får göra. Den är samlad i `isFinance` och `isFinanceSuper` i `src/domain.js` och i vilken rutt som kräver vilken nivå, så den går att flytta. Superuser ser hela administrationen men kan bara ändra periodlåsningen, allt annat är administratörens. I adminvyerna saknas skrivknapparna för superusern, och servern nekar skrivningar oavsett. Administratörer har alltid båda nivåerna.
 
 **Utlägg och körjournal.** Utlägg med kvitto (JPEG, PNG, WebP eller PDF, högst 5 MB) och körd sträcka. Båda kan vidarefaktureras till kund.
 
@@ -165,8 +166,9 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 | Läsa kund- och projektlistor | | | | ✔ | ✔ | ✔ |
 | Kvitton | egna | de man attesterar | egna | alla | alla | alla |
 | TB per konsult och provisionsrapport | | | egen provision | | ✔ | ✔ |
-| Statistik och prognos | | sina konsulter | egen | | | alla |
-| Användare, kunder, projekt, avtal, provisionsregler, övriga inställningar | | | | | | ✔ |
+| Statistik och prognos | | sina konsulter | egen | | alla (läsa) | alla |
+| Läsa användare, avtal, provisionsregler, projektens team och inställningar | | | | | ✔ | ✔ |
+| Ändra användare, kunder, projekt, avtal, provisionsregler, övriga inställningar | | | | | | ✔ |
 
 Ekonomi ser kundens pengar men inte provisioner. Det gör bara ekonomi-superuser och administratörer. Projektledare och BM ser timmar men inte pengar.
 

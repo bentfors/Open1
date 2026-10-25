@@ -1,6 +1,6 @@
 import { get, qs } from '../api.js';
 import { h, s, add, setKids, fmtMoney, fmtNum, fmtDate, fmtSpan, fmtDaysLeft, fmtK, shortMonth, fmtMonth, dataTable, toast, localToday } from '../dom.js';
-import { isAdmin } from '../state.js';
+import { isFinanceSuper } from '../state.js';
 import { basisText, showBasis } from './reports.js';
 
 const KIND_LABEL = { tb_percent: 'Procent av TB', per_consultant: 'Belopp per konsult', tb_tiered: 'Trappa på antal konsulter' };
@@ -126,12 +126,12 @@ function scenarioCard(earnerId) {
 
 export async function renderStats(root, params) {
   const requested = parseId(params[0]);
-  const people = isAdmin() ? await get('/api/stats/people') : [];
+  const people = isFinanceSuper() ? await get('/api/stats/people') : [];
   const earnerId = requested ?? people[0]?.id;
   const data = await get(`/api/stats${qs({ earner_id: earnerId })}`);
 
-  const head = [h('h1', {}, isAdmin() ? 'Statistik' : 'Min statistik')];
-  if (isAdmin()) {
+  const head = [h('h1', {}, isFinanceSuper() ? 'Statistik' : 'Min statistik')];
+  if (isFinanceSuper()) {
     const sel = h(
       'select',
       { id: 'who', 'aria-label': 'Välj person', onchange: (e) => (location.hash = `#/statistik/${e.target.value}`) },

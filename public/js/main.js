@@ -1,6 +1,6 @@
 import { get, post, onApiEvent } from './api.js';
 import { h, clear, toast, add, setKids } from './dom.js';
-import { state, refreshApprovalCount, isAdmin, isFinance } from './state.js';
+import { state, refreshApprovalCount, isFinance, isFinanceSuper } from './state.js';
 import { renderLogin, renderForcedPasswordChange } from './views/login.js';
 import { renderTime } from './views/time.js';
 import { renderApprovals } from './views/approvals.js';
@@ -37,7 +37,7 @@ function currentRoute() {
 function buildNav(active) {
   const nav = h('nav', { class: 'nav', 'aria-label': 'Huvudmeny' });
   for (const [name, r] of Object.entries(ROUTES)) {
-    if (r.hidden || (r.admin && !isAdmin()) || (r.finance && !isFinance()) || (r.stats && !isAdmin() && !state.user.has_stats)) continue;
+    if (r.hidden || (r.admin && !isFinanceSuper()) || (r.finance && !isFinance()) || (r.stats && !isFinanceSuper() && !state.user.has_stats)) continue;
     const link = h('a', { href: `#/${name}`, 'aria-current': name === active ? 'page' : null }, r.label);
     if (r.badge) {
       const badge = h('span', { class: `badge ${state.approvalCount ? '' : 'hidden'}` }, String(state.approvalCount));

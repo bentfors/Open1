@@ -58,7 +58,7 @@ export function registerProjects({ db, router }) {
       .all(),
   );
 
-  router.add('GET', '/api/projects/:id', { auth: 'admin' }, ({ params }) => {
+  router.add('GET', '/api/projects/:id', { auth: 'finance_super' }, ({ params }) => {
     const id = Number(params.id);
     const project = db
       .prepare(

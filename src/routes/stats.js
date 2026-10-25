@@ -1,6 +1,6 @@
 import { bad } from '../http.js';
 import { f, parse, optId } from '../validate.js';
-import { isAdmin } from '../domain.js';
+import { isFinanceSuper } from '../domain.js';
 import { addDays, addMonths, monthEnd, monthStart, today } from '../dates.js';
 import { buildStats, scenario } from '../stats.js';
 
@@ -15,8 +15,8 @@ const SCENARIO_SCHEMA = {
 };
 
 export function registerStats({ db, router }) {
-  // Vems statistik som visas: användaren själv, eller för administratörer den som väljs.
-  const who = (user, query) => (isAdmin(user) ? (optId(query.earner_id, 'Mottagare') ?? user.id) : user.id);
+  // Vems statistik som visas: användaren själv, eller för administratörer och ekonomi-superuser den som väljs.
+  const who = (user, query) => (isFinanceSuper(user) ? (optId(query.earner_id, 'Mottagare') ?? user.id) : user.id);
 
   router.add('GET', '/api/stats', {}, ({ user, query }) => {
     const months = query.months ? parse({ months: Number(query.months) }, { months: SCENARIO_SCHEMA.months }).months : 12;
@@ -41,7 +41,7 @@ export function registerStats({ db, router }) {
   });
 
   // Vilka som har en statistikvy: de med provisionsregler eller konsulter att vara BM för.
-  router.add('GET', '/api/stats/people', { auth: 'admin' }, () =>
+  router.add('GET', '/api/stats/people', { auth: 'finance_super' }, () =>
     db
       .prepare(
         `SELECT u.id, u.name, c.name AS category FROM users u LEFT JOIN categories c ON c.id = u.category_id

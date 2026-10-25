@@ -120,15 +120,18 @@ describe('ekonomiadministratörer, två nivåer', () => {
       assert.equal((await u.client.get('/api/projects')).status, 200);
       assert.equal((await u.client.post('/api/customers', { name: 'Ny' })).status, 403);
       assert.equal((await u.client.patch(`/api/projects/${w.p1}`, { hourly_rate: 1 })).status, 403);
-      assert.equal((await u.client.get(`/api/projects/${w.p1}`)).status, 403, 'detaljvyn med team och priser är administratörens');
     }
+    // Detaljvyn med team och priser: superusern läser, ekonomi på lägre nivå gör det inte.
+    assert.equal((await sup.client.get(`/api/projects/${w.p1}`)).status, 200);
+    assert.equal((await basic.client.get(`/api/projects/${w.p1}`)).status, 403);
   });
 
-  test('ingen av nivåerna når administratörens områden', async () => {
+  test('administratörens områden: lägre nivå når inget, och ingen av nivåerna kan ändra eller öppna godkänt', async () => {
+    for (const url of ['/api/users', '/api/commission-rules', '/api/employments', '/api/assignments', '/api/contracts/warnings', '/api/stats/people']) {
+      assert.equal((await basic.client.get(url)).status, 403, url);
+    }
     for (const u of both()) {
-      for (const url of ['/api/users', '/api/commission-rules', '/api/employments', '/api/assignments', '/api/contracts/warnings', '/api/stats/people', '/api/approvals/approved']) {
-        assert.equal((await u.client.get(url)).status, 403, url);
-      }
+      assert.equal((await u.client.get('/api/approvals/approved')).status, 403, 'listan över godkänt att öppna igen är administratörens');
       assert.equal((await u.client.post('/api/users', { email: 'x@t.se', name: 'X', role: 'admin', password: 'losenord-for-test-1' })).status, 403);
       assert.equal((await u.client.post('/api/commission-rules', { earner_id: u.id, kind: 'per_consultant', period: 'month', amount: 99999 })).status, 403);
       assert.equal((await u.client.post('/api/approvals/reopen', { kind: 'time', ids: [timeId] })).status, 403);
@@ -153,10 +156,33 @@ describe('ekonomiadministratörer, två nivåer', () => {
     assert.equal((await sup.client.get(`/api/reports/commission?${range}&earner_id=${cia.id}`)).json.rows.length, 0);
     assert.equal((await sup.client.get(`/api/reports/commission?${range}&format=csv`)).status, 200);
 
-    // Läsrätten gäller rapporterna, inte reglerna eller någons statistik.
-    for (const u of both()) {
-      assert.equal((await u.client.get('/api/commission-rules')).status, 403);
-      assert.equal((await u.client.get(`/api/stats?earner_id=${bo.id}`)).json.earner.id, u.id, 'statistiken blir den egna');
+    // Ekonomi på lägre nivå ser varken reglerna eller någon annans statistik.
+    assert.equal((await basic.client.get('/api/commission-rules')).status, 403);
+    assert.equal((await basic.client.get(`/api/stats?earner_id=${bo.id}`)).json.earner.id, basic.id, 'statistiken blir den egna');
+  });
+
+  test('superusern ser allt men ändrar inget: läsrätt till administrationen och allas statistik', async () => {
+    const READ = ['/api/users', '/api/employments', '/api/assignments', '/api/contracts/warnings', '/api/commission-rules', '/api/stats/people', `/api/projects/${w.p1}`, '/api/customers', '/api/projects'];
+    for (const url of READ) {
+      assert.equal((await sup.client.get(url)).status, 200, `superuser läser ${url}`);
+      assert.equal((await basic.client.get(url)).status, url === '/api/customers' || url === '/api/projects' ? 200 : 403, `lägre nivå ${url}`);
+    }
+    // Statistik för den som väljs, inte bara den egna.
+    assert.equal((await sup.client.get(`/api/stats?earner_id=${bo.id}`)).json.earner.id, bo.id);
+    assert.equal((await sup.client.get(`/api/stats/scenario?count=1&rate=1000&cost=500&earner_id=${bo.id}`)).status, 200);
+
+    // Allt som skriver är fortfarande administratörens.
+    const WRITE = [
+      ['post', '/api/users', { email: 'x@t.se', name: 'X', password: 'ett-langt-losenord' }],
+      ['patch', `/api/users/${anna.id}`, { name: 'Ändrad' }],
+      ['post', '/api/customers', { name: 'Ny kund' }],
+      ['post', '/api/commission-rules', { earner_id: bo.id, kind: 'tb_percent', period: 'month', percent: 5, source_ids: [anna.id] }],
+      ['post', '/api/employments', { user_id: anna.id, type: 'permanent', start_date: '2030-01-01' }],
+      ['post', '/api/assignments', { user_id: anna.id, customer_id: w.customer, start_date: '2030-01-01', hourly_rate: 1, hours_per_week: 1 }],
+      ['patch', '/api/settings', { company_name: 'Ändrat' }],
+    ];
+    for (const [method, url, body] of WRITE) {
+      assert.equal((await sup.client[method](url, body)).status, 403, `${method} ${url}`);
     }
   });
 
