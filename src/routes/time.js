@@ -32,7 +32,7 @@ function assertMonday(date) {
 function assertNotLocked(db, user, date) {
   const { locked_until } = getSettings(db);
   if (locked_until && date <= locked_until && !isAdmin(user)) {
-    throw forbidden(`Perioden är låst till och med ${locked_until}. Kontakta en administratör.`);
+    throw forbidden(`Perioden är låst till och med ${locked_until}. Kontakta ekonomi eller en administratör.`);
   }
 }
 

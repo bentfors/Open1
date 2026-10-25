@@ -12,14 +12,14 @@ import {
   recordLoginFailure,
   clearLoginFailures,
 } from '../auth.js';
-import { getSettings } from '../domain.js';
+import { getSettings, financeLevel } from '../domain.js';
 
 const publicUser = (db, u) => ({
   id: u.id,
   email: u.email,
   name: u.name,
   role: u.role,
-  finance: u.role === 'admin' || !!u.finance,
+  finance_level: financeLevel(u),
   category_id: u.category_id,
   manager_id: u.manager_id,
   weekly_hours: u.weekly_hours,

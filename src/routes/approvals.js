@@ -132,7 +132,7 @@ export function registerApprovals({ db, router }) {
       const rows = loadDecidable(kind, ids, user);
       const { locked_until } = getSettings(db);
       if (locked_until && !isAdmin(user) && rows.some((r) => r.date <= locked_until)) {
-        throw forbidden(`Perioden är låst till och med ${locked_until}. Kontakta en administratör.`);
+        throw forbidden(`Perioden är låst till och med ${locked_until}. Kontakta ekonomi eller en administratör.`);
       }
 
       if (body.decision === 'reject') {

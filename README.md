@@ -49,7 +49,17 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 
 **Attest.** Varje konsult har en **BM (konsultchef)**, som attesterar allt hen rapporterar: tid (projekttid och frånvaro), utlägg och körningar, oavsett projekt. BM sätts på användaren under Admin → Användare. Har en användare ingen BM gäller den äldre ordningen: projektledaren attesterar på sina projekt, och det som saknar projektledare går till den anställdes chef. Ingen attesterar sin egen rad, utom administratör. Avslag kräver en anledning och går tillbaka till användaren. Administratör kan öppna godkänd tid igen (Attest → Godkända).
 
-**Fakturering avgörs av ekonomi, inte av den som attesterar.** Attest svarar på "stämmer det som rapporterats?". Vad som sedan faktureras, avskrivs eller räknas upp i upplupet avgörs av ekonomiadministratörer. De får en egen behörighet på användaren (Admin → Användare → Ekonomiadministratör) och har sedan Fakturering, upplupet och tidrapporter med pengar, men inga andra administratörsrättigheter. Den som attesterar kan alltså inte fakturera, och den som fakturerar kan inte attestera andras tid.
+**Fakturering avgörs av ekonomi, inte av den som attesterar.** Attest svarar på "stämmer det som rapporterats?". Vad som sedan faktureras, avskrivs eller räknas upp i upplupet avgörs av ekonomiadministratörer. De har egen behörighet på användaren (Admin → Användare → Ekonomibehörighet) i två nivåer, och inga andra administratörsrättigheter. Den som attesterar kan alltså inte fakturera, och den som fakturerar kan inte attestera andras tid.
+
+| | Ekonomi | Ekonomi-superuser |
+|---|---|---|
+| Se projekt och kunder att fakturera, välja rader, skapa fakturaunderlag, CSV | ✔ | ✔ |
+| Upplupet och tidrapporter med pengar för alla | ✔ | ✔ |
+| Avskriva och ångra avskrivning | | ✔ |
+| Ångra ett skapat fakturaunderlag | | ✔ |
+| Låsa perioder (Fakturering → Periodlåsning) | | ✔ |
+
+Gränsen går vid sådant som är svårt att ta tillbaka eller som ändrar vad andra får göra. Den är samlad i `isFinance` och `isFinanceSuper` i `src/domain.js` och i vilken rutt som kräver vilken nivå, så den går att flytta. Superuser kan bara ändra periodlåsningen bland inställningarna, resten är administratörens. Administratörer har alltid båda nivåerna.
 
 **Utlägg och körjournal.** Utlägg med kvitto (JPEG, PNG, WebP eller PDF, högst 5 MB) och körd sträcka. Båda kan vidarefaktureras till kund.
 
@@ -59,7 +69,7 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 
 **Övriga rapporter.** Tidrapport per projekt, kund, aktivitet, användare, kategori, månad, dag eller frånvarotyp, med CSV-export för svensk Excel. TB per konsult och provision.
 
-**Periodlåsning.** Administratör kan låsa perioder till ett datum. Då kan vanliga användare varken ändra eller attestera i perioden.
+**Periodlåsning.** Ekonomi-superuser och administratörer kan låsa perioder till ett datum (Fakturering → Periodlåsning). Då kan användare, BM och ekonomi på lägre nivå varken ändra eller attestera i perioden. Bara administratörer kan fortfarande rätta i en låst period.
 
 ### Provision
 
@@ -143,18 +153,19 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 
 ## Behörigheter
 
-| | Användare | BM / projektledare / chef | Mottagare av provision | Ekonomi | Administratör |
-|---|---|---|---|---|---|
-| Egen tid, utlägg, körjournal | ✔ | ✔ | ✔ | ✔ | ✔ |
-| Attestera tid, utlägg, körning | | BM: sina konsulter. Annars projektledare och chef | | | allt |
-| Tidrapporter (timmar) | egen | + sina konsulter, projekt och underställda | egen | allt | allt |
-| Priser, kostnader, intäkter i tidrapporter | | | | ✔ | ✔ |
-| Fakturering, avskrivning, upplupet | | | | ✔ | ✔ |
-| Läsa kund- och projektlistor | | | | ✔ | ✔ |
-| Kvitton | egna | de man attesterar | egna | alla | alla |
-| TB per konsult och provisionsrapport | | | egen provision | | ✔ |
-| Statistik och prognos | | sina konsulter | egen | | alla |
-| Användare, kunder, projekt, avtal, provisionsregler, inställningar | | | | | ✔ |
+| | Användare | BM / projektledare / chef | Mottagare av provision | Ekonomi | Ekonomi-superuser | Administratör |
+|---|---|---|---|---|---|---|
+| Egen tid, utlägg, körjournal | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Attestera tid, utlägg, körning | | BM: sina konsulter. Annars projektledare och chef | | | | allt |
+| Tidrapporter (timmar) | egen | + sina konsulter, projekt och underställda | egen | allt | allt | allt |
+| Intäkter och kostnader i tidrapporter | | | | ✔ | ✔ | ✔ |
+| Skapa fakturaunderlag, upplupet | | | | ✔ | ✔ | ✔ |
+| Avskrivning, ångra underlag, låsa perioder | | | | | ✔ | ✔ |
+| Läsa kund- och projektlistor | | | | ✔ | ✔ | ✔ |
+| Kvitton | egna | de man attesterar | egna | alla | alla | alla |
+| TB per konsult och provisionsrapport | | | egen provision | | | ✔ |
+| Statistik och prognos | | sina konsulter | egen | | | alla |
+| Användare, kunder, projekt, avtal, provisionsregler, övriga inställningar | | | | | | ✔ |
 
 Ekonomi ser alltså kundens pengar men inte provisioner eller löner. Projektledare och BM ser timmar men inte pengar.
 
@@ -172,7 +183,7 @@ Ekonomi ser alltså kundens pengar men inte provisioner eller löner. Projektled
 
 - Databasen är en SQLite-fil i WAL-läge. Säkerhetskopiera med `sqlite3 data/x-time.sqlite ".backup 'backup.sqlite'"` och kopiera `data/receipts/` med.
 - Inloggningsspärren ligger i minnet och nollställs vid omstart. Kör en enda instans.
-- Tester: `npm test` (124 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
+- Tester: `npm test` (126 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
 
 ## Begränsningar och antaganden
 

@@ -288,6 +288,10 @@ export const MIGRATIONS = [
 
   // 5: ekonomiadministratör. Hanterar fakturering och ekonomirapporter utan att vara administratör.
   `ALTER TABLE users ADD COLUMN finance INTEGER NOT NULL DEFAULT 0;`,
+
+  // 6: två ekonominivåer. finance: 0 ingen, 1 ekonomi, 2 ekonomi-superuser.
+  // De som redan hade behörigheten kunde allt som ekonomi kan, så de blir superuser och ingen tappar något.
+  `UPDATE users SET finance = 2 WHERE finance = 1;`,
 ];
 
 export function openDb(file) {

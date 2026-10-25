@@ -1,7 +1,7 @@
-import { bad } from '../http.js';
+import { bad, forbidden } from '../http.js';
 import { f, parse } from '../validate.js';
 import { setSetting } from '../db.js';
-import { getSettings } from '../domain.js';
+import { getSettings, isAdmin } from '../domain.js';
 
 const SCHEMA = {
   company_name: f.str({ required: true, max: 80, label: 'Företagsnamn' }),
@@ -15,9 +15,13 @@ const SCHEMA = {
 export function registerSettings({ db, router }) {
   router.add('GET', '/api/settings', {}, () => getSettings(db));
 
-  router.add('PATCH', '/api/settings', { auth: 'admin' }, ({ body }) => {
+  // Ekonomi-superuser får låsa perioder. Övriga inställningar ändrar bara administratörer.
+  router.add('PATCH', '/api/settings', { auth: 'finance_super' }, ({ user, body }) => {
     const data = parse(body, SCHEMA, { partial: true });
     if (!Object.keys(data).length) throw bad('Inget att uppdatera.');
+    if (!isAdmin(user) && Object.keys(data).some((k) => k !== 'locked_until')) {
+      throw forbidden('Du kan bara ändra periodlåsningen. Övriga inställningar ändrar administratörer.');
+    }
     for (const [key, value] of Object.entries(data)) setSetting(db, key, value ?? '');
     return getSettings(db);
   });

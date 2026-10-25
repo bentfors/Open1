@@ -11,7 +11,7 @@ const USER_SCHEMA = {
   email: f.email({ required: true, label: 'E-post' }),
   name: f.str({ required: true, max: 100, label: 'Namn' }),
   role: f.oneOf(['admin', 'user'], { required: true, label: 'Roll' }),
-  finance: f.bool({ label: 'Ekonomiadministratör' }),
+  finance: f.int({ min: 0, max: 2, label: 'Ekonomibehörighet' }),
   category_id: f.int({ nullable: true, min: 1, label: 'Kategori' }),
   manager_id: f.int({ nullable: true, min: 1, label: 'Chef' }),
   bm_id: f.int({ nullable: true, min: 1, label: 'BM' }),

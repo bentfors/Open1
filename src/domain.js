@@ -20,8 +20,14 @@ export function getSettings(db) {
 }
 
 export const isAdmin = (user) => user.role === 'admin';
-// Ekonomiadministratörer och administratörer hanterar fakturering och ekonomirapporter.
-export const isFinance = (user) => user.role === 'admin' || !!user.finance;
+/**
+ * Ekonomi har två nivåer (users.finance): 1 = ekonomi, 2 = ekonomi-superuser. Administratörer har båda.
+ *  - ekonomi: skapar fakturaunderlag, ser upplupet och tidrapporter med pengar.
+ *  - superuser: dessutom sådant som är svårt att ta tillbaka: avskrivning, ångra underlag och låsa perioder.
+ */
+export const financeLevel = (user) => (user.role === 'admin' ? 2 : Number(user.finance) || 0);
+export const isFinance = (user) => financeLevel(user) >= 1;
+export const isFinanceSuper = (user) => financeLevel(user) >= 2;
 
 /**
  * Prioritet för timpris (debitering): projektmedlem > aktivitet > projekt > användarens standardpris.

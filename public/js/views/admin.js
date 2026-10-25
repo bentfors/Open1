@@ -57,7 +57,7 @@ async function usersTab(root) {
         rows: users,
         rowClass: (u) => (u.active ? '' : 'inactive'),
         columns: [
-          { label: 'Namn', render: (u) => [u.name, u.active ? null : h('span', { class: 'chip', title: 'Inaktiv' }, ' inaktiv'), u.role === 'admin' ? h('span', { class: 'chip accent' }, ' admin') : null, u.finance && u.role !== 'admin' ? h('span', { class: 'chip accent', title: 'Ekonomiadministratör' }, ' ekonomi') : null] },
+          { label: 'Namn', render: (u) => [u.name, u.active ? null : h('span', { class: 'chip', title: 'Inaktiv' }, ' inaktiv'), u.role === 'admin' ? h('span', { class: 'chip accent' }, ' admin') : null, u.finance && u.role !== 'admin' ? h('span', { class: 'chip accent', title: u.finance === 2 ? 'Ekonomi-superuser' : 'Ekonomiadministratör' }, u.finance === 2 ? ' ekonomi+' : ' ekonomi') : null] },
           { label: 'E-post', render: (u) => u.email },
           { label: 'Kategori', render: (u) => u.category_name || '' },
           { label: 'BM', render: (u) => u.bm_name || '' },
@@ -101,15 +101,25 @@ async function usersTab(root) {
       { name: 'weekly_hours', label: 'Arbetstid per vecka (tim)', type: 'number', step: '0.5', min: '0', max: '80' },
       { name: 'cost_rate', label: 'Intern timkostnad (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används för TB. Syns bara för administratörer.' },
       { name: 'default_bill_rate', label: 'Standard timpris (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används när varken projekt, aktivitet eller medlem har eget pris.' },
-      { name: 'finance', label: 'Ekonomiadministratör (fakturering och ekonomirapporter)', type: 'checkbox', full: true },
+      {
+        name: 'finance',
+        label: 'Ekonomibehörighet',
+        type: 'select',
+        options: [
+          { value: 0, label: 'Ingen' },
+          { value: 1, label: 'Ekonomi: skapar fakturaunderlag, ser upplupet och ekonomirapporter' },
+          { value: 2, label: 'Ekonomi-superuser: dessutom avskriver, ångrar underlag och låser perioder' },
+        ],
+        full: true,
+      },
       ...(existing ? [{ name: 'active', label: 'Aktiv', type: 'checkbox' }] : [{ name: 'password', label: 'Tillfälligt lösenord', type: 'password', required: true, hint: 'Minst 10 tecken. Användaren måste byta vid första inloggning.', full: true }]),
     ];
     editDialog({
       title: existing ? `Ändra ${existing.name}` : 'Ny användare',
       fields,
-      values: existing ? { ...existing, active: !!existing.active, finance: !!existing.finance } : { role: 'user', weekly_hours: 40, cost_rate: 0, default_bill_rate: 0, finance: false },
+      values: existing ? { ...existing, active: !!existing.active } : { role: 'user', weekly_hours: 40, cost_rate: 0, default_bill_rate: 0, finance: 0 },
       onSave: async (v) => {
-        const body = { ...v, cost_rate: v.cost_rate ?? 0, default_bill_rate: v.default_bill_rate ?? 0, weekly_hours: v.weekly_hours ?? 40 };
+        const body = { ...v, cost_rate: v.cost_rate ?? 0, default_bill_rate: v.default_bill_rate ?? 0, weekly_hours: v.weekly_hours ?? 40, finance: v.finance ?? 0 };
         if (existing) await patch(`/api/users/${existing.id}`, body);
         else await post('/api/users', body);
         toast('Användaren är sparad.', 'ok');

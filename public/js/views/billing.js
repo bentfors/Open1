@@ -1,4 +1,5 @@
-import { get, post, del, qs } from '../api.js';
+import { get, post, del, patch, qs } from '../api.js';
+import { state, isFinanceSuper } from '../state.js';
 import { h, add, setKids, fmtMoney, fmtNum, fmtDate, fmtMonth, toast, editDialog, openDialog, confirmDialog, promptDialog, dataTable, localToday } from '../dom.js';
 
 const KIND_LABEL = { time: 'Tid', expense: 'Utlägg', mileage: 'Körning' };
@@ -9,6 +10,7 @@ function subnav(active) {
     { class: 'subnav' },
     h('a', { href: '#/fakturering', 'aria-current': active === 'att' ? 'page' : null }, 'Att fakturera'),
     h('a', { href: '#/fakturering/underlag', 'aria-current': active === 'underlag' ? 'page' : null }, 'Skapade underlag'),
+    h('a', { href: '#/fakturering/lasning', 'aria-current': active === 'lasning' ? 'page' : null }, 'Periodlåsning'),
   );
 }
 
@@ -248,8 +250,10 @@ async function workbench(root, scope, id) {
       h('button', { class: 'btn', type: 'button', disabled: !readyCount, onclick: () => { for (const i of data.items) if (i.selectable) selected.add(key(i)); sync(); } }, `Markera allt fakturerbart (${readyCount})`),
       h('button', { class: 'btn ghost', type: 'button', disabled: !rows.length, onclick: () => { selected.clear(); sync(); } }, 'Rensa'),
       h('span', { class: 'spacer' }, rows.length ? `${rows.length} markerade${canInvoice ? ` · ${fmtMoney(sum)}` : ''}` : ''),
-      canRestore ? h('button', { class: 'btn', type: 'button', onclick: restore }, 'Ångra avskrivning') : null,
-      h('button', { class: 'btn danger', type: 'button', disabled: !canWaive, title: canWaive || !rows.length ? '' : 'Fakturerade rader kan inte avskrivas', onclick: waive }, 'Avskriv …'),
+      isFinanceSuper() && canRestore ? h('button', { class: 'btn', type: 'button', onclick: restore }, 'Ångra avskrivning') : null,
+      isFinanceSuper()
+        ? h('button', { class: 'btn danger', type: 'button', disabled: !canWaive, title: canWaive || !rows.length ? '' : 'Fakturerade rader kan inte avskrivas', onclick: waive }, 'Avskriv …')
+        : null,
       h(
         'button',
         { class: 'btn primary', type: 'button', disabled: !canInvoice, title: canInvoice || !rows.length ? '' : 'Bara godkända, debiterbara rader som inte redan är fakturerade kan faktureras', onclick: createInvoice },
@@ -376,8 +380,8 @@ async function invoiceHistory(root) {
               h('button', { class: 'btn sm', type: 'button', onclick: () => open(r).catch((e) => toast(e.message, 'error')) }, 'Öppna'),
               ' ',
               h('a', { class: 'btn sm', href: `/api/invoices/${r.id}?format=csv` }, 'CSV'),
-              ' ',
-              h(
+              isFinanceSuper() ? ' ' : null,
+              !isFinanceSuper() ? null : h(
                 'button',
                 {
                   class: 'btn sm danger',
@@ -405,8 +409,47 @@ async function invoiceHistory(root) {
   await reload();
 }
 
+// ── Periodlåsning ──────────────────────────────────────────────────────
+async function periodLock(root) {
+  const settings = await get('/api/settings');
+  const canEdit = isFinanceSuper();
+  const input = h('input', { id: 'lock-date', type: 'date', value: settings.locked_until || '', disabled: !canEdit });
+  const status = h('p', {});
+  const showStatus = (date) =>
+    setKids(status, date ? ['Perioder till och med ', h('strong', {}, fmtDate(date)), ' är låsta.'] : 'Ingen period är låst.');
+  showStatus(settings.locked_until);
+
+  const save = h('button', { class: 'btn primary', type: 'button', disabled: !canEdit }, 'Spara låsning');
+  save.addEventListener('click', async () => {
+    try {
+      const r = await patch('/api/settings', { locked_until: input.value || null });
+      state.settings = r;
+      showStatus(r.locked_until);
+      toast(r.locked_until ? `Perioder till och med ${fmtDate(r.locked_until)} är låsta.` : 'Låsningen är borttagen.', 'ok');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  add(
+    root,
+    h('h1', {}, 'Fakturering'),
+    subnav('lasning'),
+    h(
+      'div',
+      { class: 'card' },
+      h('h2', {}, 'Periodlåsning'),
+      status,
+      h('p', { class: 'muted' }, 'När en period är låst kan användare varken registrera, ändra eller attestera tid, utlägg och körningar till och med det datumet. Administratörer kan fortfarande rätta. Lås när månaden är fakturerad och bokförd.'),
+      h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', { for: 'lock-date' }, 'Låst till och med'), input), save, h('button', { class: 'btn', type: 'button', disabled: !canEdit, onclick: () => { input.value = ''; save.click(); } }, 'Ta bort låsning')),
+      canEdit ? null : h('p', { class: 'muted small' }, 'Bara ekonomi-superuser och administratörer kan ändra låsningen.'),
+    ),
+  );
+}
+
 export async function renderBilling(root, params) {
   const [view, id] = params;
+  if (view === 'lasning') return periodLock(root);
   if ((view === 'projekt' || view === 'kund') && Number.isInteger(Number(id))) return workbench(root, view, Number(id));
   if (view === 'underlag') return invoiceHistory(root);
   return overview(root);

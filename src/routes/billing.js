@@ -134,7 +134,7 @@ export function registerBilling({ db, router }) {
   // ── Avskrivning ───────────────────────────────────────────────────────
   // Rader som aldrig ska faktureras (kulans timmar, fast pris som faktureras separat) lämnar kön
   // och upplupet, men finns kvar i projektvyn under "Avskrivet".
-  router.add('POST', '/api/billing/waive', { auth: 'finance' }, ({ user, body }) => {
+  router.add('POST', '/api/billing/waive', { auth: 'finance_super' }, ({ user, body }) => {
     const ids = idLists(body);
     const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
     if (!note) throw bad('Ange en anledning.');
@@ -152,7 +152,7 @@ export function registerBilling({ db, router }) {
     });
   });
 
-  router.add('POST', '/api/billing/restore', { auth: 'finance' }, ({ body }) => {
+  router.add('POST', '/api/billing/restore', { auth: 'finance_super' }, ({ body }) => {
     const ids = idLists(body);
     return tx(db, () => {
       let n = 0;
@@ -322,7 +322,7 @@ export function registerBilling({ db, router }) {
   });
 
   // Ångra underlaget: raderna blir fakturerbara igen.
-  router.add('DELETE', '/api/invoices/:id', { auth: 'finance' }, ({ params }) => {
+  router.add('DELETE', '/api/invoices/:id', { auth: 'finance_super' }, ({ params }) => {
     const id = Number(params.id);
     loadInvoice(id);
     tx(db, () => {

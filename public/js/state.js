@@ -16,5 +16,7 @@ export async function refreshApprovalCount() {
 }
 
 export const isAdmin = () => state.user?.role === 'admin';
-// Ekonomiadministratörer och administratörer: fakturering och ekonomirapporter.
-export const isFinance = () => !!state.user?.finance;
+// Ekonomi har två nivåer: 1 = ekonomi (skapar underlag), 2 = superuser (avskriver, ångrar underlag, låser perioder). Administratörer har 2.
+export const financeLevel = () => state.user?.finance_level ?? 0;
+export const isFinance = () => financeLevel() >= 1;
+export const isFinanceSuper = () => financeLevel() >= 2;
