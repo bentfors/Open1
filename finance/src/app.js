@@ -16,6 +16,9 @@ import { userForSession } from './auth.js';
 import { createPriceService, yahooProvider, noProvider } from './prices.js';
 import { registerAuth } from './routes/auth.js';
 import { registerAccounts } from './routes/accounts.js';
+import { registerHousehold } from './routes/household.js';
+import { registerBudget } from './routes/budget.js';
+import { registerPlan } from './routes/plan.js';
 import { registerTransactions } from './routes/transactions.js';
 import { registerReports } from './routes/reports.js';
 
@@ -56,6 +59,9 @@ export function createApp({ db, prices }) {
   const deps = { db, router, prices };
   registerAuth(deps);
   registerAccounts(deps);
+  registerHousehold(deps);
+  registerBudget(deps);
+  registerPlan(deps);
   registerTransactions(deps);
   registerReports(deps);
 

@@ -1,6 +1,7 @@
 import { bad } from '../http.js';
 import { LIABILITY_KINDS, ACCOUNT_KINDS, accountBalances, today } from '../domain.js';
 import { valueAll } from '../prices.js';
+import { scopeOf } from '../scope.js';
 import { isoDate } from '../validate.js';
 
 const monthOf = (iso) => iso.slice(0, 7);
@@ -17,14 +18,14 @@ function monthsBetween(from, to) {
 }
 
 /** Resultatet för en period. Överföringar (egna konton, sparande, amortering) ingår inte. */
-export function incomeStatement(db, userId, from, to) {
+export function incomeStatement(db, sc, from, to) {
   const rows = db
     .prepare(
       `SELECT t.date, t.amount, t.category_id, c.name AS category, c.kind AS kind
        FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
-       WHERE t.user_id = ? AND t.date BETWEEN ? AND ?`,
+       WHERE t.account_id IN (SELECT a.id FROM accounts a WHERE ${sc.acct('a')}) AND t.date BETWEEN ? AND ?`,
     )
-    .all(userId, from, to);
+    .all(from, to);
 
   const lines = new Map();
   const months = new Map(monthsBetween(from, to).map((m) => [m, { month: m, income: 0, expense: 0 }]));
@@ -88,14 +89,15 @@ export function registerReports({ db, router, prices }) {
     const to = isoDate(query.to, 'Till');
     if (from > to) throw bad('Från-datumet ligger efter till-datumet.');
     if (monthsBetween(from, to).length > 60) throw bad('Välj högst fem år åt gången.');
-    return incomeStatement(db, user.id, from, to);
+    return incomeStatement(db, scopeOf(user, query.scope), from, to);
   });
 
   // Balansräkning per idag: kontosaldon (transaktioner till och med idag) och innehav till aktuell kurs.
   router.add('GET', '/api/reports/balance', {}, async ({ user, query }) => {
     const date = today();
-    const accounts = accountBalances(db, user.id, date);
-    const holdings = await valueAll(prices, db.prepare('SELECT * FROM holdings WHERE user_id = ? ORDER BY name').all(user.id), { force: query.refresh === '1' });
+    const sc = scopeOf(user, query.scope);
+    const accounts = accountBalances(db, sc, date);
+    const holdings = await valueAll(prices, db.prepare(`SELECT h.* FROM holdings h WHERE ${sc.holdings('h')} ORDER BY h.name`).all(), { force: query.refresh === '1' });
 
     const assets = [];
     const liabilities = [];
@@ -120,11 +122,11 @@ export function registerReports({ db, router, prices }) {
     // annars ser ett innehav utan kurs ut som en förlust.
     if (!unpriced.length) {
       db.prepare(
-        `INSERT INTO net_worth_snapshots (user_id, date, assets, liabilities) VALUES (?, ?, ?, ?)
-         ON CONFLICT(user_id, date) DO UPDATE SET assets = excluded.assets, liabilities = excluded.liabilities`,
-      ).run(user.id, date, totalAssets, totalLiabilities);
+        `INSERT INTO net_worth_snapshots (user_id, scope, date, assets, liabilities) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, scope, date) DO UPDATE SET assets = excluded.assets, liabilities = excluded.liabilities`,
+      ).run(user.id, sc.mode, date, totalAssets, totalLiabilities);
     }
-    const history = db.prepare('SELECT date, assets, liabilities FROM net_worth_snapshots WHERE user_id = ? ORDER BY date').all(user.id);
+    const history = db.prepare('SELECT date, assets, liabilities FROM net_worth_snapshots WHERE user_id = ? AND scope = ? ORDER BY date').all(user.id, sc.mode);
 
     return {
       date,

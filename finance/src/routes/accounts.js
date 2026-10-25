@@ -1,21 +1,33 @@
-import { bad, notFound, conflict } from '../http.js';
+import { bad, notFound, conflict, forbidden } from '../http.js';
 import { insertRow, updateRow } from '../db.js';
-import { ACCOUNT_KINDS, accountBalances, today } from '../domain.js';
+import { ACCOUNT_KINDS, LIABILITY_KINDS, accountBalances, today } from '../domain.js';
 import { valueAll } from '../prices.js';
-import { str, oneOf, ore, num, id, isoDate } from '../validate.js';
+import { scopeOf } from '../scope.js';
+import { str, oneOf, ore, num, id } from '../validate.js';
 
 export function registerAccounts({ db, router, prices }) {
-  const own = (table, rowId, userId) => {
-    const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND user_id = ?`).get(rowId, userId);
+  // Rad som användaren får se och ändra: hushållets delade rader och egna privata.
+  const visible = (table, rowId, user) => {
+    const row = db.prepare(`SELECT * FROM ${table} t WHERE t.id = ? AND ${scopeOf(user).acct('t')}`).get(rowId);
     if (!row) throw notFound();
     return row;
   };
+  const sharedFlag = (v, fallback = 1) => (v === undefined ? fallback : v ? 1 : 0);
 
   // ── Konton ──────────────────────────────────────────────────────────
-  router.add('GET', '/api/accounts', {}, ({ user }) => ({
+  router.add('GET', '/api/accounts', {}, ({ user, query }) => ({
     kinds: ACCOUNT_KINDS,
-    items: accountBalances(db, user.id, '9999-12-31'),
+    items: accountBalances(db, scopeOf(user, query.scope), '9999-12-31'),
   }));
+
+  // Ränta och amortering behövs för prognoser och gäller bara skulder.
+  function loanTerms(body, kind) {
+    if (!LIABILITY_KINDS.has(kind)) return { interest_rate: null, monthly_amortization: 0 };
+    return {
+      interest_rate: num(body.interest_rate, 'Ränta', { min: 0, max: 50, required: false }),
+      monthly_amortization: ore(body.monthly_amortization ?? 0, 'Amortering per månad'),
+    };
+  }
 
   // balance är det saldo kontot har idag (signerat: skuld är negativt). Ingångsvärdet räknas fram från det.
   router.add('POST', '/api/accounts', {}, ({ user, body }) => {
@@ -23,29 +35,47 @@ export function registerAccounts({ db, router, prices }) {
     const kind = oneOf(body.kind, 'Kontotyp', Object.keys(ACCOUNT_KINDS));
     const balance = ore(body.balance ?? 0, 'Saldo');
     if (db.prepare('SELECT 1 FROM accounts WHERE user_id = ? AND name = ?').get(user.id, name)) throw conflict('Du har redan ett konto med det namnet.');
-    const accountId = insertRow(db, 'accounts', { user_id: user.id, name, kind, opening_balance: balance });
-    return { id: accountId };
+    return {
+      id: insertRow(db, 'accounts', {
+        user_id: user.id,
+        household_id: user.household_id,
+        name,
+        kind,
+        opening_balance: balance,
+        shared: sharedFlag(body.shared),
+        ...loanTerms(body, kind),
+      }),
+    };
   });
 
+  // Hushållets medlemmar får ändra delade konton. Typ, delning och ränta ändras bara av ägaren.
   router.add('PATCH', '/api/accounts/:id', {}, ({ user, params, body }) => {
-    const acct = own('accounts', Number(params.id), user.id);
+    const acct = visible('accounts', Number(params.id), user);
+    const owner = acct.user_id === user.id;
     const data = {};
     if (body.name !== undefined) {
       data.name = str(body.name, 'Namn', { max: 80 });
-      const clash = db.prepare('SELECT id FROM accounts WHERE user_id = ? AND name = ? AND id <> ?').get(user.id, data.name, acct.id);
-      if (clash) throw conflict('Du har redan ett konto med det namnet.');
+      const clash = db.prepare('SELECT id FROM accounts WHERE user_id = ? AND name = ? AND id <> ?').get(acct.user_id, data.name, acct.id);
+      if (clash) throw conflict('Ägaren har redan ett konto med det namnet.');
     }
-    if (body.kind !== undefined) data.kind = oneOf(body.kind, 'Kontotyp', Object.keys(ACCOUNT_KINDS));
     if (body.balance !== undefined) {
       const wanted = ore(body.balance, 'Saldo');
       const sum = db.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM transactions WHERE account_id = ?').get(acct.id).s;
       data.opening_balance = wanted - sum;
     }
+    if (body.kind !== undefined || body.shared !== undefined || body.interest_rate !== undefined || body.monthly_amortization !== undefined) {
+      if (!owner) throw forbidden('Bara kontots ägare kan ändra typ, delning och lånevillkor.');
+      const kind = body.kind === undefined ? acct.kind : oneOf(body.kind, 'Kontotyp', Object.keys(ACCOUNT_KINDS));
+      data.kind = kind;
+      if (body.shared !== undefined) data.shared = sharedFlag(body.shared);
+      Object.assign(data, loanTerms({ interest_rate: acct.interest_rate, monthly_amortization: acct.monthly_amortization, ...body }, kind));
+    }
     updateRow(db, 'accounts', acct.id, data);
   });
 
   router.add('DELETE', '/api/accounts/:id', {}, ({ user, params }) => {
-    const acct = own('accounts', Number(params.id), user.id);
+    const acct = visible('accounts', Number(params.id), user);
+    if (acct.user_id !== user.id) throw forbidden('Bara kontots ägare kan ta bort det.');
     db.prepare('DELETE FROM accounts WHERE id = ?').run(acct.id);
   });
 
@@ -67,17 +97,20 @@ export function registerAccounts({ db, router, prices }) {
     }
     if (has('cost_basis')) d.cost_basis = ore(body.cost_basis, 'Anskaffningsvärde', { required: false });
     if (has('account_id')) d.account_id = id(body.account_id, 'Konto', { required: false });
+    if (has('shared')) d.shared = sharedFlag(body.shared);
     return d;
   }
 
-  function checkHolding(d, userId) {
+  function checkHolding(d, user) {
     if (d.price_mode === 'auto' && !d.symbol) throw bad('Ange en symbol för automatisk kurs, eller välj manuell kurs.');
     if (d.price_mode === 'manual' && (d.manual_price === undefined || d.manual_price === null)) throw bad('Ange kursen för manuell prissättning.');
-    if (d.account_id && !db.prepare('SELECT 1 FROM accounts WHERE id = ? AND user_id = ?').get(d.account_id, userId)) throw bad('Okänt konto.');
+    if (d.account_id && !db.prepare(`SELECT 1 FROM accounts a WHERE a.id = ? AND ${scopeOf(user).acct('a')}`).get(d.account_id)) throw bad('Okänt konto.');
   }
 
   router.add('GET', '/api/holdings', {}, async ({ user, query }) => {
-    const rows = db.prepare('SELECT * FROM holdings WHERE user_id = ? ORDER BY name').all(user.id);
+    const rows = db
+      .prepare(`SELECT a.*, (SELECT u.name FROM users u WHERE u.id = a.user_id) AS owner FROM holdings a WHERE ${scopeOf(user, query.scope).holdings('a')} ORDER BY a.name`)
+      .all();
     const valued = await valueAll(prices, rows, { force: query.refresh === '1' });
     const total = valued.reduce((n, h) => n + (h.value ?? 0), 0);
     return { provider: prices.provider, total, items: valued };
@@ -85,19 +118,20 @@ export function registerAccounts({ db, router, prices }) {
 
   router.add('POST', '/api/holdings', {}, ({ user, body }) => {
     const d = holdingFields(body);
-    checkHolding(d, user.id);
-    return { id: insertRow(db, 'holdings', { user_id: user.id, ...d }) };
+    checkHolding(d, user);
+    return { id: insertRow(db, 'holdings', { user_id: user.id, household_id: user.household_id, ...d }) };
   });
 
   router.add('PATCH', '/api/holdings/:id', {}, ({ user, params, body }) => {
-    const row = own('holdings', Number(params.id), user.id);
+    const row = visible('holdings', Number(params.id), user);
     const d = holdingFields(body, true);
-    checkHolding({ ...row, ...d }, user.id);
+    if (d.shared !== undefined && row.user_id !== user.id) throw forbidden('Bara ägaren kan ändra delning.');
+    checkHolding({ ...row, ...d }, user);
     updateRow(db, 'holdings', row.id, d);
   });
 
   router.add('DELETE', '/api/holdings/:id', {}, ({ user, params }) => {
-    const row = own('holdings', Number(params.id), user.id);
+    const row = visible('holdings', Number(params.id), user);
     db.prepare('DELETE FROM holdings WHERE id = ?').run(row.id);
   });
 

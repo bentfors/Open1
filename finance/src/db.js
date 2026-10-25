@@ -104,6 +104,105 @@ export const MIGRATIONS = [
     PRIMARY KEY (user_id, date)
   );
   `,
+
+  // 2: hushåll, delade konton, budget, mål och scenarier.
+  (db) => {
+    db.exec(`
+      CREATE TABLE households (
+        id            INTEGER PRIMARY KEY,
+        name          TEXT NOT NULL,
+        -- Antaganden för prognoser, nominella procent per år. Användaren ändrar dem själv.
+        return_rate   REAL NOT NULL DEFAULT 5,
+        cash_rate     REAL NOT NULL DEFAULT 1.5,
+        fixed_growth  REAL NOT NULL DEFAULT 0,
+        inflation     REAL NOT NULL DEFAULT 2,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      ALTER TABLE users ADD COLUMN household_id INTEGER REFERENCES households(id);
+    `);
+    // Befintliga användare får varsitt hushåll.
+    for (const u of db.prepare('SELECT id, name FROM users').all()) {
+      const hid = Number(db.prepare('INSERT INTO households (name) VALUES (?)').run(`Hushållet ${u.name}`).lastInsertRowid);
+      db.prepare('UPDATE users SET household_id = ? WHERE id = ?').run(hid, u.id);
+    }
+    db.exec(`
+      -- household_id på kontona och deras data gör att läsning kan filtreras utan att gå via users.
+      ALTER TABLE accounts   ADD COLUMN household_id INTEGER REFERENCES households(id);
+      ALTER TABLE accounts   ADD COLUMN shared INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE accounts   ADD COLUMN interest_rate REAL;
+      ALTER TABLE accounts   ADD COLUMN monthly_amortization INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE holdings   ADD COLUMN household_id INTEGER REFERENCES households(id);
+      ALTER TABLE holdings   ADD COLUMN shared INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE categories ADD COLUMN household_id INTEGER REFERENCES households(id);
+      ALTER TABLE rules      ADD COLUMN household_id INTEGER REFERENCES households(id);
+      UPDATE accounts   SET household_id = (SELECT household_id FROM users WHERE users.id = accounts.user_id);
+      UPDATE holdings   SET household_id = (SELECT household_id FROM users WHERE users.id = holdings.user_id);
+      UPDATE categories SET household_id = (SELECT household_id FROM users WHERE users.id = categories.user_id);
+      UPDATE rules      SET household_id = (SELECT household_id FROM users WHERE users.id = rules.user_id);
+      CREATE UNIQUE INDEX categories_household_name ON categories(household_id, name);
+      CREATE UNIQUE INDEX rules_household_pattern ON rules(household_id, pattern);
+      CREATE INDEX accounts_household ON accounts(household_id);
+      CREATE INDEX holdings_household ON holdings(household_id);
+
+      CREATE TABLE household_invites (
+        token_hash   TEXT PRIMARY KEY,
+        household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+        created_by   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at   TEXT NOT NULL
+      );
+
+      -- Budget per kategori och månad. En rad per kategori, gäller tills den ändras.
+      CREATE TABLE budgets (
+        household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+        category_id  INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+        amount       INTEGER NOT NULL CHECK (amount >= 0),
+        PRIMARY KEY (household_id, category_id)
+      );
+
+      CREATE TABLE goals (
+        id                   INTEGER PRIMARY KEY,
+        household_id         INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+        name                 TEXT NOT NULL,
+        target_amount        INTEGER NOT NULL CHECK (target_amount > 0),
+        target_date          TEXT NOT NULL,
+        manual_amount        INTEGER NOT NULL DEFAULT 0,
+        monthly_contribution INTEGER NOT NULL DEFAULT 0 CHECK (monthly_contribution >= 0),
+        -- Förväntad årlig avkastning i procent. Tomt = hushållets ränta på kontanter.
+        annual_return        REAL,
+        created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE goal_accounts (
+        goal_id    INTEGER NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        PRIMARY KEY (goal_id, account_id)
+      );
+
+      -- events är JSON, validerad i koden (src/scenario.js).
+      CREATE TABLE scenarios (
+        id            INTEGER PRIMARY KEY,
+        household_id  INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+        name          TEXT NOT NULL,
+        horizon_years INTEGER NOT NULL DEFAULT 20 CHECK (horizon_years BETWEEN 1 AND 40),
+        events        TEXT NOT NULL DEFAULT '[]',
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Ögonblicksbilder per användare och vy (hela hushållet eller bara egna konton).
+      ALTER TABLE net_worth_snapshots RENAME TO net_worth_snapshots_old;
+      CREATE TABLE net_worth_snapshots (
+        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        scope       TEXT NOT NULL DEFAULT 'household',
+        date        TEXT NOT NULL,
+        assets      INTEGER NOT NULL,
+        liabilities INTEGER NOT NULL,
+        PRIMARY KEY (user_id, scope, date)
+      );
+      INSERT INTO net_worth_snapshots (user_id, scope, date, assets, liabilities)
+        SELECT user_id, 'household', date, assets, liabilities FROM net_worth_snapshots_old;
+      DROP TABLE net_worth_snapshots_old;
+    `);
+  },
 ];
 
 export function openDb(file) {

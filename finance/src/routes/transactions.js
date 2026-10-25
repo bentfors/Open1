@@ -2,36 +2,50 @@ import { bad, notFound, conflict } from '../http.js';
 import { insertRow, updateRow } from '../db.js';
 import { importRows, previewRows, normalizeText, ruleMatches } from '../domain.js';
 import { parseStatement } from '../statement.js';
+import { scopeOf } from '../scope.js';
 import { str, oneOf, id } from '../validate.js';
 
 const IMPORT_LIMIT = 2 * 1024 * 1024;
 const MAX_ROWS = 5000;
 
 export function registerTransactions({ db, router }) {
-  const ownRow = (table, rowId, userId) => {
-    const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND user_id = ?`).get(rowId, userId);
+  // Kategorier, regler: hushållets. Konton: de användaren ser. Transaktioner: de på konton användaren ser.
+  const ownRow = (table, rowId, user) => {
+    const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND household_id = ?`).get(rowId, user.household_id);
+    if (!row) throw notFound();
+    return row;
+  };
+  const visibleAccount = (accountId, user) => {
+    const row = db.prepare(`SELECT * FROM accounts a WHERE a.id = ? AND ${scopeOf(user).acct('a')}`).get(accountId);
+    if (!row) throw notFound();
+    return row;
+  };
+  const visibleTx = (txId, user) => {
+    const row = db
+      .prepare(`SELECT t.* FROM transactions t WHERE t.id = ? AND t.account_id IN (SELECT a.id FROM accounts a WHERE ${scopeOf(user).acct('a')})`)
+      .get(txId);
     if (!row) throw notFound();
     return row;
   };
 
   // ── Kategorier och regler ───────────────────────────────────────────
   router.add('GET', '/api/categories', {}, ({ user }) => ({
-    items: db.prepare('SELECT id, name, kind FROM categories WHERE user_id = ? ORDER BY kind, name').all(user.id),
+    items: db.prepare('SELECT id, name, kind FROM categories WHERE household_id = ? ORDER BY kind, name').all(user.household_id),
   }));
 
   router.add('POST', '/api/categories', {}, ({ user, body }) => {
     const name = str(body.name, 'Namn', { max: 60 });
     const kind = oneOf(body.kind, 'Typ', ['income', 'expense', 'transfer']);
-    if (db.prepare('SELECT 1 FROM categories WHERE user_id = ? AND name = ?').get(user.id, name)) throw conflict('Kategorin finns redan.');
-    return { id: insertRow(db, 'categories', { user_id: user.id, name, kind }) };
+    if (db.prepare('SELECT 1 FROM categories WHERE household_id = ? AND name = ?').get(user.household_id, name)) throw conflict('Kategorin finns redan.');
+    return { id: insertRow(db, 'categories', { user_id: user.id, household_id: user.household_id, name, kind }) };
   });
 
   router.add('PATCH', '/api/categories/:id', {}, ({ user, params, body }) => {
-    const cat = ownRow('categories', Number(params.id), user.id);
+    const cat = ownRow('categories', Number(params.id), user);
     const d = {};
     if (body.name !== undefined) {
       d.name = str(body.name, 'Namn', { max: 60 });
-      if (db.prepare('SELECT 1 FROM categories WHERE user_id = ? AND name = ? AND id <> ?').get(user.id, d.name, cat.id)) throw conflict('Kategorin finns redan.');
+      if (db.prepare('SELECT 1 FROM categories WHERE household_id = ? AND name = ? AND id <> ?').get(user.household_id, d.name, cat.id)) throw conflict('Kategorin finns redan.');
     }
     if (body.kind !== undefined) d.kind = oneOf(body.kind, 'Typ', ['income', 'expense', 'transfer']);
     updateRow(db, 'categories', cat.id, d);
@@ -39,7 +53,7 @@ export function registerTransactions({ db, router }) {
 
   // Transaktioner i kategorin blir okategoriserade och reglerna försvinner.
   router.add('DELETE', '/api/categories/:id', {}, ({ user, params }) => {
-    const cat = ownRow('categories', Number(params.id), user.id);
+    const cat = ownRow('categories', Number(params.id), user);
     db.prepare('DELETE FROM categories WHERE id = ?').run(cat.id);
   });
 
@@ -47,30 +61,32 @@ export function registerTransactions({ db, router }) {
     items: db
       .prepare(
         `SELECT r.id, r.pattern, r.category_id, c.name AS category FROM rules r JOIN categories c ON c.id = r.category_id
-         WHERE r.user_id = ? ORDER BY c.name, r.pattern`,
+         WHERE r.household_id = ? ORDER BY c.name, r.pattern`,
       )
-      .all(user.id),
+      .all(user.household_id),
   }));
 
   router.add('POST', '/api/rules', {}, ({ user, body }) => {
     const pattern = str(body.pattern, 'Textmönster', { max: 60 });
     if (normalizeText(pattern).length < 3) throw bad('Mönstret måste vara minst tre tecken, annars matchar det för mycket.');
     const categoryId = id(body.category_id, 'Kategori');
-    ownRow('categories', categoryId, user.id);
-    const exists = db.prepare('SELECT id FROM rules WHERE user_id = ? AND pattern = ?').get(user.id, pattern);
+    ownRow('categories', categoryId, user);
+    const exists = db.prepare('SELECT id FROM rules WHERE household_id = ? AND pattern = ?').get(user.household_id, pattern);
     if (exists) db.prepare('UPDATE rules SET category_id = ? WHERE id = ?').run(categoryId, exists.id);
-    else insertRow(db, 'rules', { user_id: user.id, pattern, category_id: categoryId });
-    return { applied: body.apply === false ? 0 : applyRule(user.id, pattern, categoryId) };
+    else insertRow(db, 'rules', { user_id: user.id, household_id: user.household_id, pattern, category_id: categoryId });
+    return { applied: body.apply === false ? 0 : applyRule(scopeOf(user), pattern, categoryId) };
   });
 
   router.add('DELETE', '/api/rules/:id', {}, ({ user, params }) => {
-    ownRow('rules', Number(params.id), user.id);
+    ownRow('rules', Number(params.id), user);
     db.prepare('DELETE FROM rules WHERE id = ?').run(Number(params.id));
   });
 
   // Sätter kategori på okategoriserade transaktioner som matchar mönstret. Redan kategoriserade rörs aldrig.
-  function applyRule(userId, pattern, categoryId) {
-    const open = db.prepare('SELECT id, description FROM transactions WHERE user_id = ? AND category_id IS NULL').all(userId);
+  function applyRule(sc, pattern, categoryId) {
+    const open = db
+      .prepare(`SELECT id, description FROM transactions WHERE category_id IS NULL AND account_id IN (SELECT a.id FROM accounts a WHERE ${sc.acct('a')})`)
+      .all();
     const set = db.prepare(`UPDATE transactions SET category_id = ?, auto = 'rule' WHERE id = ?`);
     let n = 0;
     for (const t of open) {
@@ -84,8 +100,9 @@ export function registerTransactions({ db, router }) {
 
   // ── Transaktioner ───────────────────────────────────────────────────
   router.add('GET', '/api/transactions', {}, ({ user, query }) => {
-    const where = ['t.user_id = ?'];
-    const args = [user.id];
+    const sc = scopeOf(user, query.scope);
+    const where = [`t.account_id IN (SELECT x.id FROM accounts x WHERE ${sc.acct('x')})`];
+    const args = [];
     if (query.account_id) (where.push('t.account_id = ?'), args.push(Number(query.account_id)));
     if (query.category_id) (where.push('t.category_id = ?'), args.push(Number(query.category_id)));
     if (query.uncategorized === '1') where.push('t.category_id IS NULL');
@@ -109,32 +126,32 @@ export function registerTransactions({ db, router }) {
   });
 
   router.add('PATCH', '/api/transactions/:id', {}, ({ user, params, body }) => {
-    const t = ownRow('transactions', Number(params.id), user.id);
+    const t = visibleTx(Number(params.id), user);
     const categoryId = id(body.category_id, 'Kategori', { required: false });
-    if (categoryId) ownRow('categories', categoryId, user.id);
+    if (categoryId) ownRow('categories', categoryId, user);
     db.prepare('UPDATE transactions SET category_id = ?, auto = NULL WHERE id = ?').run(categoryId, t.id);
-    return { applied: categoryId && typeof body.rule_pattern === 'string' && body.rule_pattern.trim() ? saveRule(user.id, body.rule_pattern, categoryId, t.description) : 0 };
+    return { applied: categoryId && typeof body.rule_pattern === 'string' && body.rule_pattern.trim() ? saveRule(user, body.rule_pattern, categoryId, t.description) : 0 };
   });
 
-  function saveRule(userId, rawPattern, categoryId, description) {
+  function saveRule(user, rawPattern, categoryId, description) {
     const pattern = str(rawPattern, 'Textmönster', { max: 60 });
     if (normalizeText(pattern).length < 3) throw bad('Mönstret måste vara minst tre tecken.');
     if (!ruleMatches(pattern, description)) throw bad('Mönstret förekommer inte som helt ord i transaktionens text.');
-    const exists = db.prepare('SELECT id FROM rules WHERE user_id = ? AND pattern = ?').get(userId, pattern);
+    const exists = db.prepare('SELECT id FROM rules WHERE household_id = ? AND pattern = ?').get(user.household_id, pattern);
     if (exists) db.prepare('UPDATE rules SET category_id = ? WHERE id = ?').run(categoryId, exists.id);
-    else insertRow(db, 'rules', { user_id: userId, pattern, category_id: categoryId });
-    return applyRule(userId, pattern, categoryId);
+    else insertRow(db, 'rules', { user_id: user.id, household_id: user.household_id, pattern, category_id: categoryId });
+    return applyRule(scopeOf(user), pattern, categoryId);
   }
 
   router.add('DELETE', '/api/transactions/:id', {}, ({ user, params }) => {
-    ownRow('transactions', Number(params.id), user.id);
+    visibleTx(Number(params.id), user);
     db.prepare('DELETE FROM transactions WHERE id = ?').run(Number(params.id));
   });
 
   // ── Import av inklistrat kontoutdrag ────────────────────────────────
   function parseRequest(user, body) {
     const accountId = id(body.account_id, 'Konto');
-    ownRow('accounts', accountId, user.id);
+    visibleAccount(accountId, user);
     const text = str(body.text, 'Kontoutdrag', { max: IMPORT_LIMIT });
     const m = body.mapping && typeof body.mapping === 'object' ? body.mapping : {};
     const mapping = {};
@@ -150,7 +167,7 @@ export function registerTransactions({ db, router }) {
 
   router.add('POST', '/api/import/preview', { bodyLimit: IMPORT_LIMIT + 4096 }, ({ user, body }) => {
     const { accountId, parsed } = parseRequest(user, body);
-    const rows = previewRows(db, user.id, accountId, parsed.rows);
+    const rows = previewRows(db, scopeOf(user), accountId, parsed.rows);
     return {
       delimiter: parsed.delimiter,
       headers: parsed.headers,
@@ -171,6 +188,6 @@ export function registerTransactions({ db, router }) {
     const { accountId, parsed } = parseRequest(user, body);
     if (!parsed.rows.length) throw bad('Inga rader kunde tolkas.');
     if (parsed.mapping.date === null || parsed.mapping.amount === null) throw bad('Datum och belopp måste kopplas till varsin kolumn.');
-    return { ...importRows(db, user.id, accountId, parsed.rows), skipped: parsed.skipped.length };
+    return { ...importRows(db, scopeOf(user), accountId, parsed.rows), skipped: parsed.skipped.length };
   });
 }

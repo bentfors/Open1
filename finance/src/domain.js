@@ -50,10 +50,11 @@ const DEFAULT_RULES = [
   ['SKATTEVERKET', 'Skatt'],
 ];
 
-export function seedUserDefaults(db, userId) {
+// Kategorier och regler tillhör hushållet. user_id är den som skapade dem.
+export function seedHousehold(db, userId, householdId) {
   const ids = new Map();
-  for (const [name, kind] of DEFAULT_CATEGORIES) ids.set(name, insertRow(db, 'categories', { user_id: userId, name, kind }));
-  for (const [pattern, cat] of DEFAULT_RULES) insertRow(db, 'rules', { user_id: userId, pattern, category_id: ids.get(cat) });
+  for (const [name, kind] of DEFAULT_CATEGORIES) ids.set(name, insertRow(db, 'categories', { user_id: userId, household_id: householdId, name, kind }));
+  for (const [pattern, cat] of DEFAULT_RULES) insertRow(db, 'rules', { user_id: userId, household_id: householdId, pattern, category_id: ids.get(cat) });
 }
 
 export const normalizeText = (s) => String(s).toUpperCase().replace(/\s+/g, ' ').trim();
@@ -76,7 +77,7 @@ export function matchRule(rules, description) {
   return best;
 }
 
-export const userRules = (db, userId) => db.prepare('SELECT id, pattern, category_id FROM rules WHERE user_id = ?').all(userId);
+export const householdRules = (db, householdId) => db.prepare('SELECT id, pattern, category_id FROM rules WHERE household_id = ?').all(householdId);
 
 function fingerprints(rows) {
   const seen = new Map();
@@ -89,35 +90,36 @@ function fingerprints(rows) {
 }
 
 /** Läser in rader på ett konto. Redan importerade rader hoppas över. Returnerar antal nya och dubbletter. */
-export function importRows(db, userId, accountId, rows) {
-  const rules = userRules(db, userId);
+export function importRows(db, sc, accountId, rows) {
+  const rules = householdRules(db, sc.householdId);
   const fps = fingerprints(rows);
   const insert = db.prepare(
     `INSERT OR IGNORE INTO transactions (user_id, account_id, date, description, search, amount, balance, category_id, auto, fingerprint)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const owner = db.prepare('SELECT user_id FROM accounts WHERE id = ?').get(accountId).user_id;
   return tx(db, () => {
     let added = 0;
     const newIds = [];
     rows.forEach((r, i) => {
       const rule = matchRule(rules, r.description);
-      const res = insert.run(userId, accountId, r.date, r.description, normalizeText(r.description), r.amount, r.balance, rule?.category_id ?? null, rule ? 'rule' : null, fps[i]);
+      const res = insert.run(owner, accountId, r.date, r.description, normalizeText(r.description), r.amount, r.balance, rule?.category_id ?? null, rule ? 'rule' : null, fps[i]);
       if (res.changes) {
         added++;
         newIds.push(Number(res.lastInsertRowid));
       }
     });
-    const paired = markTransfers(db, userId, newIds);
+    const paired = markTransfers(db, sc, newIds);
     return { added, duplicates: rows.length - added, transfers: paired };
   });
 }
 
 /** Förhandsvisning: vilka rader är nya, och vilken kategori skulle de få? */
-export function previewRows(db, userId, accountId, rows) {
-  const rules = userRules(db, userId);
+export function previewRows(db, sc, accountId, rows) {
+  const rules = householdRules(db, sc.householdId);
   const fps = fingerprints(rows);
   const exists = db.prepare('SELECT 1 FROM transactions WHERE account_id = ? AND fingerprint = ?');
-  const cats = new Map(db.prepare('SELECT id, name FROM categories WHERE user_id = ?').all(userId).map((c) => [c.id, c.name]));
+  const cats = new Map(db.prepare('SELECT id, name FROM categories WHERE household_id = ?').all(sc.householdId).map((c) => [c.id, c.name]));
   return rows.map((r, i) => {
     const rule = matchRule(rules, r.description);
     return { ...r, duplicate: !!exists.get(accountId, fps[i]), category: rule ? cats.get(rule.category_id) : null };
@@ -128,14 +130,14 @@ export function previewRows(db, userId, accountId, rows) {
  * Egna överföringar syns som +X på ett konto och −X på ett annat inom några dagar. Räknas de som inkomst och
  * utgift blåses resultatet upp, så okategoriserade par kategoriseras som Överföring. Gissning, därför auto='transfer'.
  */
-export function markTransfers(db, userId, ids) {
+export function markTransfers(db, sc, ids) {
   if (!ids.length) return 0;
-  const cat = db.prepare(`SELECT id FROM categories WHERE user_id = ? AND name = 'Överföring' AND kind = 'transfer'`).get(userId);
+  const cat = db.prepare(`SELECT id FROM categories WHERE household_id = ? AND name = 'Överföring' AND kind = 'transfer'`).get(sc.householdId);
   if (!cat) return 0;
   const get = db.prepare('SELECT id, account_id, date, amount, category_id FROM transactions WHERE id = ?');
   const find = db.prepare(
     `SELECT id FROM transactions
-     WHERE user_id = ? AND account_id <> ? AND amount = ? AND category_id IS NULL
+     WHERE account_id <> ? AND account_id IN (SELECT a.id FROM accounts a WHERE ${sc.write.acct('a')}) AND amount = ? AND category_id IS NULL
        AND date BETWEEN date(?, '-3 days') AND date(?, '+3 days')
      ORDER BY abs(julianday(date) - julianday(?)), id LIMIT 1`,
   );
@@ -144,7 +146,7 @@ export function markTransfers(db, userId, ids) {
   for (const id of ids) {
     const t = get.get(id);
     if (!t || t.category_id !== null) continue;
-    const other = find.get(userId, t.account_id, -t.amount, t.date, t.date, t.date);
+    const other = find.get(t.account_id, -t.amount, t.date, t.date, t.date);
     if (!other) continue;
     set.run(cat.id, id);
     set.run(cat.id, other.id);
@@ -153,16 +155,16 @@ export function markTransfers(db, userId, ids) {
   return pairs;
 }
 
-export function accountBalances(db, userId, asOf) {
+export function accountBalances(db, sc, asOf) {
   return db
     .prepare(
-      `SELECT a.id, a.name, a.kind, a.opening_balance,
+      `SELECT a.id, a.name, a.kind, a.opening_balance, a.shared, a.user_id, a.interest_rate, a.monthly_amortization, (SELECT u.name FROM users u WHERE u.id = a.user_id) AS owner,
               a.opening_balance + COALESCE((SELECT SUM(t.amount) FROM transactions t WHERE t.account_id = a.id AND t.date <= ?), 0) AS balance,
               (SELECT COUNT(*) FROM transactions t WHERE t.account_id = a.id) AS tx_count,
               (SELECT MAX(date) FROM transactions t WHERE t.account_id = a.id) AS last_tx
-       FROM accounts a WHERE a.user_id = ? ORDER BY a.kind, a.name`,
+       FROM accounts a WHERE ${sc.acct('a')} ORDER BY a.kind, a.name`,
     )
-    .all(asOf, userId);
+    .all(asOf);
 }
 
 export const today = () => {
