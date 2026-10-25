@@ -124,7 +124,7 @@ function basisText(r) {
   return `TB ${fmtMoney(r.tb)} × ${fmtNum(r.percent)} % (${fmtNum(r.consultants)} ${r.consultants === 1 ? 'konsult' : 'konsulter'} i snitt)`;
 }
 
-function showBasis(r) {
+function showBasis(r, capHours) {
   const parts = [h('p', {}, h('strong', {}, `${r.earner_name} · ${r.rule_name || KIND_LABEL[r.kind]} · ${r.period_label}`)), h('p', { class: 'muted' }, `${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}${r.complete ? '' : ' (pågår)'}`)];
   if (r.sources.length) {
     parts.push(
@@ -134,10 +134,12 @@ function showBasis(r) {
         columns: [
           { label: 'Konsult', render: (x) => x.name },
           { label: 'Timmar', num: true, render: (x) => fmtNum(x.hours) },
-          { label: 'TB', num: true, render: (x) => fmtMoney(x.tb) },
+          ...(r.capped_hours ? [{ label: 'Över gränsen (tim)', num: true, render: (x) => (x.capped_hours ? fmtNum(x.capped_hours) : '') }, { label: 'Verklig TB', num: true, render: (x) => fmtMoney(x.tb_actual) }] : []),
+          { label: 'TB för provision', num: true, render: (x) => h('span', { class: x.tb < 0 ? 'neg' : '' }, fmtMoney(x.tb)) },
         ],
-        footer: (c, i) => [`Summa`, '', fmtMoney(r.tb)][i],
+        footer: (c, i) => ['Summa', '', ...(r.capped_hours ? [fmtNum(r.capped_hours), fmtMoney(r.tb_actual)] : []), fmtMoney(r.tb)][i],
       }),
+      r.capped_hours ? h('p', { class: 'muted small' }, `En konsult utan debiterbar tid räknas bara som negativ de första ${fmtNum(capHours)} timmarna i sträck. ${fmtNum(r.capped_hours)} timmar i perioden ligger över gränsen och räknas som 0.`) : null,
     );
   }
   if (r.months.length) {
@@ -147,6 +149,7 @@ function showBasis(r) {
     );
   }
   parts.push(h('p', { class: 'section-title' }, `${basisText(r)} = ${fmtMoney(r.commission)}`));
+  if (r.floored) parts.push(h('p', { class: 'muted' }, `Utfallet blev ${fmtMoney(r.raw_commission)}. Provisionen kan aldrig bli lägre än 0 per regel och period.`));
   openDialog({ title: 'Underlag för provision', wide: true, content: parts });
 }
 
@@ -191,8 +194,8 @@ async function marginReport(root) {
               ...(admin ? [{ label: 'Mottagare', render: (r) => [r.earner_name, ' ', h('span', { class: 'chip' }, r.earner_category || '–')] }] : []),
               { label: 'Regel', render: (r) => [r.rule_name || KIND_LABEL[r.kind], h('div', { class: 'small muted' }, basisText(r))] },
               { label: 'Period', render: (r) => [r.period_label, r.complete ? null : h('span', { class: 'chip warn' }, ' pågår')], class: 'nowrap' },
-              { label: 'Provision', num: true, render: (r) => h('strong', { class: r.commission < 0 ? 'neg' : '' }, fmtMoney(r.commission)) },
-              { label: '', class: 'actions', render: (r) => h('button', { class: 'btn sm', type: 'button', onclick: () => showBasis(r) }, 'Underlag') },
+              { label: 'Provision', num: true, render: (r) => [r.floored ? h('span', { class: 'chip warn', title: `Utfallet blev ${fmtMoney(r.raw_commission)}` }, 'golv ') : null, ' ', h('strong', {}, fmtMoney(r.commission))] },
+              { label: '', class: 'actions', render: (r) => h('button', { class: 'btn sm', type: 'button', onclick: () => showBasis(r, com.bench_cap_hours) }, 'Underlag') },
             ],
           }),
         ),
@@ -223,7 +226,7 @@ async function marginReport(root) {
         h(
           'p',
           { class: 'muted small' },
-          'Bara attesterad tid räknas. Kvartal är kalenderkvartal (Q1 = januari–mars). Provision räknas per hel månad eller kvartal enligt reglerna, även om du väljer ett kortare intervall, och perioder som inte är slut markeras som pågående. ',
+          'Bara attesterad tid räknas. En konsult kan bidra med negativ TB, men provisionen blir aldrig lägre än 0 per regel och period. Kvartal är kalenderkvartal (Q1 = januari–mars). Provision räknas per hel månad eller kvartal enligt reglerna, även om du väljer ett kortare intervall, och perioder som inte är slut markeras som pågående. ',
           'TB = debiterbar intäkt − intern timkostnad, frånvaro räknas inte. ',
           com.cost_basis === 'billable' ? 'Kostnad räknas bara på debiterbara timmar. ' : 'Kostnad räknas på all projekttid, även ej debiterbar. ',
           'Fastprisprojekt räknas med sitt timpris som värde.',

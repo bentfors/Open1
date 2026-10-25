@@ -176,7 +176,6 @@ export function registerReports({ db, router }) {
     const rows = computeCommissions(db, {
       from,
       to,
-      approvedOnly: true, // provision räknas bara på attesterad tid
       earnerId: isAdmin(user) ? (optId(query.earner_id, 'Mottagare') ?? null) : user.id,
     });
     if (query.format === 'csv') {
@@ -209,7 +208,8 @@ export function registerReports({ db, router }) {
       ];
       return sendCsv(res, `provision-${from}-${to}.csv`, columns, csvRows);
     }
-    return { rows, earners: summarizeEarners(rows), cost_basis: getSettings(db).tb_cost_basis };
+    const settings = getSettings(db);
+    return { rows, earners: summarizeEarners(rows), cost_basis: settings.tb_cost_basis, bench_cap_hours: settings.bench_cap_hours };
   });
 
   /**

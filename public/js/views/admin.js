@@ -467,7 +467,7 @@ async function commissionTab(root) {
   async function edit(existing) {
     const [users, categories] = await Promise.all([get('/api/users'), get('/api/categories')]);
     const people = users.filter((u) => u.active || existing?.sources.some((s) => s.id === u.id) || existing?.earner_id === u.id);
-    const v = existing ? { ...existing } : { kind: 'tb_percent', period: 'month', min_hours: 0, floor_zero: true };
+    const v = existing ? { ...existing } : { kind: 'tb_percent', period: 'month', min_hours: 0 };
 
     const main = buildForm(
       [
@@ -481,7 +481,6 @@ async function commissionTab(root) {
     const pct = buildForm([{ name: 'percent', label: 'Andel av TB (%)', type: 'number', step: '0.1', min: '0', max: '100', required: true }], v);
     const amt = buildForm([{ name: 'amount', label: 'Belopp per konsult och månad (kr)', type: 'number', step: '1', min: '0', required: true }], v);
     const minh = buildForm([{ name: 'min_hours', label: 'Minsta antal debiterbara timmar per månad', type: 'number', step: '1', min: '0', hint: 'En konsult räknas som i uppdrag en månad med mer än så här många godkända debiterbara timmar. 0 betyder minst en minut.' }], v);
-    const floor = buildForm([{ name: 'floor_zero', label: 'Ingen negativ provision (golv vid 0 per period)', type: 'checkbox', full: true }], v);
     const dates = buildForm([{ name: 'valid_from', label: 'Gäller från', type: 'date', nullable: true }, { name: 'valid_to', label: 'Gäller till', type: 'date', nullable: true }], v);
     const sources = checkList(people.map((u) => ({ id: u.id, label: personLabel(u) })), new Set((existing?.sources || []).map((x) => x.id)), 'Konsulter vars TB provisionen räknas på');
     const cats = checkList(categories.map((c) => ({ id: c.id, label: c.name })), new Set((existing?.categories || []).map((x) => x.id)), 'Vilka kategorier räknas som konsulter?', 'Lämna alla omarkerade för att räkna alla.');
@@ -494,13 +493,12 @@ async function commissionTab(root) {
       sources: sources.el,
       minh: minh.el,
       cats: cats.el,
-      floor: floor.el,
       dates: dates.el,
     };
     const visible = {
-      tb_percent: ['pct', 'sources', 'floor', 'dates'],
+      tb_percent: ['pct', 'sources', 'dates'],
       per_consultant: ['amt', 'minh', 'cats', 'dates'],
-      tb_tiered: ['tiers', 'sources', 'minh', 'cats', 'floor', 'dates'],
+      tb_tiered: ['tiers', 'sources', 'minh', 'cats', 'dates'],
     };
     const kindSelect = main.inputs.get('kind').input;
     const apply = () => {
@@ -520,7 +518,7 @@ async function commissionTab(root) {
 
     save.addEventListener('click', async () => {
       error.classList.add('hidden');
-      const body = { ...main.read(), ...dates.read(), min_hours: minh.read().min_hours ?? 0, floor_zero: floor.read().floor_zero };
+      const body = { ...main.read(), ...dates.read(), min_hours: minh.read().min_hours ?? 0 };
       if (body.kind === 'tb_percent') Object.assign(body, pct.read());
       if (body.kind === 'per_consultant') Object.assign(body, amt.read());
       if (body.kind === 'tb_tiered') body.tiers = tiers.read();
@@ -544,7 +542,7 @@ async function commissionTab(root) {
 
   box = listSection(root, {
     title: 'Provisionsregler',
-    intro: 'Varje regel gäller en mottagare och räknas per månad eller kvartal. Utfallet syns under Rapporter → TB och provision.',
+    intro: 'Varje regel gäller en mottagare och räknas per månad eller kvartal, bara på attesterad tid. En konsult kan bidra med negativ TB, men provisionen per regel och period blir aldrig lägre än 0. Utfallet syns under Rapporter → TB och provision.',
     newLabel: '+ Ny regel',
     onNew: () => guarded(() => edit(null)),
   });
@@ -600,6 +598,16 @@ async function settingsTab(root) {
         { value: 'billable', label: 'Bara debiterbara timmar' },
       ],
       hint: 'Avgör om ej debiterbar projekttid (utbildning, internt) belastar konsultens TB och därmed provisionen.',
+    },
+    {
+      name: 'bench_cap_hours',
+      label: 'Odebiterbar tid räknas som negativ i högst (timmar)',
+      type: 'number',
+      step: '1',
+      min: '0',
+      nullable: true,
+      hint: 'En konsult utan debiterbar tid belastar provisionsunderlaget bara de första så här många timmarna i sträck. Därefter räknas 0 tills hen har debiterbar tid igen. Lämna tomt för ingen gräns.',
+      full: true,
     },
   ];
   const form = buildForm(fields, s);

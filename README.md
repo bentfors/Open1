@@ -78,7 +78,13 @@ Kostnad     = timmar × användarens timkostnad
 - **Konsult i uppdrag** en månad: mer än *minsta antal timmar* (standard 0, alltså minst en minut) godkända debiterbara timmar den månaden. Du kan begränsa vilka kategorier som räknas.
 - **Trappa**: trappsteget gäller för hela TB:n, inte marginellt. Exempel: 0 → 4 %, 11 → 6 %, 21 → 8 %.
 - **Kvartal** är kalenderkvartal: Q1 = januari–mars, Q2 = april–juni, Q3 = juli–september, Q4 = oktober–december. Kvartalsregler summerar TB över hela kvartalet, så en dålig månad nettas mot en bra. Månadsregler räknas för sig.
-- **Golv**: "Ingen negativ provision" ger 0 i stället för minus för perioden. Standard för nya regler.
+- **Negativa bidrag och golv**: en enskild konsult får bidra med negativ TB, och bidragen från reglens konsulter summeras. Provisionen per regel och period kan däremot aldrig bli lägre än 0. Ett negativt utfall på en regel kvittas inte mot en annan regel. Golvet går inte att stänga av.
+- **Bänkgräns**: en konsult som saknar debiterbar tid räknas bara som negativ de första **300 timmarna** i sträck. Därefter bidrar hen med 0 tills hen har debiterbar tid igen, och då börjar räkningen om från noll nästa gång. Gränsen ställs in under Admin → Inställningar (tomt = ingen gräns) och gäller alla TB-baserade regler. Så avgörs det:
+  - Räknaren går per arbetsdag. En dag med minst en debiterbar timme räknas som uppdrag, nollställer räknaren, och hela dagen räknas som vanligt.
+  - Dagar med bara odebiterbar projekttid (utbildning, internt, väntan) räknas upp. Frånvaro ändrar ingenting.
+  - Räknaren tar med historiken före perioden, så en månad räknas rätt även om bänktiden började tidigare.
+  - Bara attesterad tid räknas. En ej attesterad uppdragsdag nollställer inte räknaren.
+  - Rapporten Underlag visar verklig TB, TB för provision och hur många timmar som låg över gränsen. Rapporten TB per konsult visar alltid verklig TB.
 - Regler kan ha giltighetstid. Bara tid inom den räknas.
 - Perioder räknas alltid hela, även om du väljer ett kortare intervall i rapporten, och markeras som pågående tills de är slut.
 - **Bara attesterad tid räknas**, både för TB och för antalet konsulter i uppdrag. Det finns ingen förhandsvisning på ej attesterad tid. Frånvaro räknas inte.
@@ -87,7 +93,7 @@ Kostnad     = timmar × användarens timkostnad
 
 Rapporten (Rapporter → TB och provision) visar underlaget för varje rad: vilka konsulter, vilken TB, och hur många konsulter som räknades per månad.
 
-Äldre kopplingar (procent av en konsults TB) har flyttats över till regler av typen procent av TB, per månad och utan golv, så att tidigare siffror inte ändras.
+Äldre kopplingar (procent av en konsults TB) har flyttats över till regler av typen procent av TB, per månad. De följer nu golvet och bänkgränsen, så tidigare negativa eller bänkbelastade siffror kan ha ändrats.
 
 ### Upplupet
 
@@ -130,13 +136,13 @@ Projektledare ser alltså timmar men inte pengar. Det är ett medvetet val för 
 
 - Databasen är en SQLite-fil i WAL-läge. Säkerhetskopiera med `sqlite3 data/x-time.sqlite ".backup 'backup.sqlite'"` och kopiera `data/receipts/` med.
 - Inloggningsspärren ligger i minnet och nollställs vid omstart. Kör en enda instans.
-- Tester: `npm test` (86 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
+- Tester: `npm test` (95 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
 
 ## Begränsningar och antaganden
 
 Jag har inte kunnat läsa Millnets egen dokumentation, så jämförelsen med Flow bygger på dina svar och allmän kännedom om hur den här typen av system fungerar. Följande saknas eller är gissningar:
 
-- **Provisionsreglerna** är min tolkning av att provision kan hänga på procent av TB per månad eller kvartal, och på antalet konsulter i uppdrag. Hur "i uppdrag" ska avgränsas, hur kvartal räknas för trappan (jag använder snittet av månadsantalen) och om negativ provision ska finnas är inte bestämt av dig. Kontrollera med en period där du vet facit.
+- **Provisionsreglerna** är min tolkning av att provision kan hänga på procent av TB per månad eller kvartal, och på antalet konsulter i uppdrag. Hur "i uppdrag" ska avgränsas, hur kvartal räknas för trappan (jag använder snittet av månadsantalen) och hur en dag med både debiterbar och odebiterbar tid ska räknas (jag låter all debiterbar tid göra dagen till ett uppdrag) har du inte bestämt. Kontrollera med en period där du vet facit.
 - **Fastprisprojekt** faktureras inte härifrån. Timmarna visas, och kan avskrivas när du fakturerat dem på annat sätt.
 - **Ej debiterbar tid** kan inte göras debiterbar i fakturavyn. Ändra aktivitetens inställning och låt tiden sparas om.
 - **Helgdagar och normtid.** Normen är arbetstid per vecka. Röda dagar räknas inte av.

@@ -11,7 +11,6 @@ const RULE_SCHEMA = {
   percent: f.num({ nullable: true, min: 0, max: 100, label: 'Procent' }),
   amount: f.num({ nullable: true, min: 0, max: 10000000, label: 'Belopp per konsult' }),
   min_hours: f.num({ min: 0, max: 744, label: 'Minsta antal timmar' }),
-  floor_zero: f.bool({ label: 'Ingen negativ provision' }),
   valid_from: f.date({ nullable: true, label: 'Gäller från' }),
   valid_to: f.date({ nullable: true, label: 'Gäller till' }),
 };
@@ -71,7 +70,6 @@ export function registerCommission({ db, router }) {
     const categories = parseIdList(body.category_ids, 'Kategorierna') ?? [];
     const tiers = data.kind === 'tb_tiered' ? parseTiersInput(body.tiers) : null;
     data.min_hours ??= 0;
-    data.floor_zero ??= 1;
     data.name ??= '';
     // Fält som inte hör till regeltypen sparas inte, så att de inte kan förvirra senare.
     if (data.kind !== 'tb_percent') data.percent = null;

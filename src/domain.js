@@ -5,12 +5,15 @@ export const SETTING_DEFAULTS = {
   locked_until: '',
   mileage_rate: '2.5',
   tb_cost_basis: 'worked',
+  bench_cap_hours: '300',
 };
 
 export function getSettings(db) {
   const out = {};
   for (const [key, def] of Object.entries(SETTING_DEFAULTS)) out[key] = getSetting(db, key, def);
   out.mileage_rate = Number(out.mileage_rate);
+  // Tomt betyder ingen gräns.
+  out.bench_cap_hours = out.bench_cap_hours === '' ? null : Number(out.bench_cap_hours);
   return out;
 }
 

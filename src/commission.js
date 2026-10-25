@@ -11,6 +11,14 @@ import { getSettings, round2 } from './domain.js';
  * En konsult är "i uppdrag" en månad om hen har mer än min_hours debiterbara timmar den månaden.
  * Kategorier på regeln begränsar vilka som räknas. Ingen vald kategori betyder alla.
  * TB per tidspost = debiterbar intäkt − kostnad (se inställningen tb_cost_basis). Frånvaro räknas inte.
+ *
+ * Tre regler gäller alla beräkningar, och den som får provisionen kan aldrig få mindre än 0:
+ *  - Bara attesterad tid räknas.
+ *  - En enskild konsult får bidra med negativ TB. Bidragen summeras per regel och period.
+ *  - Summan per regel och period golvas vid 0. Negativt på en regel kvittas inte mot en annan.
+ *  - En konsult utan någon debiterbar tid ("bänk") räknas bara som negativ för de första
+ *    bench_cap_hours timmarna i sträck. Därefter bidrar hen med 0 tills hen har debiterbar tid igen.
+ *    En dag med minst en debiterbar timme räknas som uppdrag och nollställer räknaren.
  */
 
 export function parseTiers(raw) {
@@ -41,10 +49,10 @@ export function listRules(db, { earnerId = null, ruleId = null } = {}) {
     `SELECT rc.category_id AS id, c.name FROM commission_rule_categories rc JOIN categories c ON c.id = rc.category_id
      WHERE rc.rule_id = ? ORDER BY c.sort, c.name`,
   );
-  return rules.map((r) => ({
+  // floor_zero finns kvar i tabellen men används inte: golvet vid 0 gäller alltid.
+  return rules.map(({ floor_zero, ...r }) => ({
     ...r,
     tiers: parseTiers(r.tiers),
-    floor_zero: !!r.floor_zero,
     sources: sources.all(r.id),
     categories: cats.all(r.id),
   }));
@@ -62,33 +70,73 @@ const min = (a, b) => (a < b ? a : b);
 /**
  * Räknar provision för alla perioder som överlappar [from, to]. Perioden räknas alltid hel,
  * även om intervallet bara täcker en del av den, och markeras som ofullständig tills den är slut.
+ * Bara attesterad tid ingår.
  */
-export function computeCommissions(db, { from, to, approvedOnly = true, earnerId = null }) {
-  const worked = getSettings(db).tb_cost_basis === 'billable' ? 0 : 1;
-  const statusSql = approvedOnly ? `te.status = 'approved'` : `te.status IN ('open','submitted','approved')`;
+export function computeCommissions(db, { from, to, earnerId = null }) {
+  const settings = getSettings(db);
+  const worked = settings.tb_cost_basis === 'billable' ? 0 : 1;
+  const capMinutes = settings.bench_cap_hours === null ? null : settings.bench_cap_hours * 60;
 
-  const tbBySource = db.prepare(
-    `SELECT te.user_id AS user_id, u.name AS name,
-            SUM(te.minutes) AS minutes,
+  // En rad per arbetsdag med projekttid. Frånvaro (activity_id saknas) ingår inte.
+  const dailyStmt = db.prepare(
+    `SELECT te.work_date AS d,
+            SUM(CASE WHEN te.billable = 1 THEN te.minutes ELSE 0 END) AS bill_min,
+            SUM(CASE WHEN te.billable = 0 THEN te.minutes ELSE 0 END) AS non_min,
             SUM(CASE WHEN te.billable = 1 THEN te.minutes * te.bill_rate / 60.0 ELSE 0 END) AS revenue,
             SUM(CASE WHEN :worked = 1 OR te.billable = 1 THEN te.minutes * te.cost_rate / 60.0 ELSE 0 END) AS cost
-     FROM time_entries te JOIN users u ON u.id = te.user_id
-     WHERE te.activity_id IS NOT NULL AND ${statusSql}
+     FROM time_entries te
+     WHERE te.user_id = :user AND te.activity_id IS NOT NULL AND te.status = 'approved'
        AND te.work_date BETWEEN :from AND :to
-       AND te.user_id IN (SELECT user_id FROM commission_rule_sources WHERE rule_id = :rule)
-     GROUP BY te.user_id ORDER BY u.name`,
+     GROUP BY te.work_date ORDER BY te.work_date`,
+  );
+  // Odebiterbara minuter sedan konsultens senaste debiterbara dag före perioden. Dessa är redan "förbrukade".
+  const carryStmt = db.prepare(
+    `SELECT COALESCE(SUM(te.minutes), 0) AS m
+     FROM time_entries te
+     WHERE te.user_id = :user AND te.activity_id IS NOT NULL AND te.status = 'approved'
+       AND te.billable = 0 AND te.work_date < :start
+       AND te.work_date > COALESCE((SELECT MAX(work_date) FROM time_entries
+                                    WHERE user_id = :user AND activity_id IS NOT NULL AND status = 'approved'
+                                      AND billable = 1 AND work_date < :start), '0000-01-01')`,
   );
   const consultantCount = db.prepare(
     `SELECT COUNT(*) AS n FROM (
        SELECT te.user_id
        FROM time_entries te JOIN users u ON u.id = te.user_id
-       WHERE te.billable = 1 AND te.activity_id IS NOT NULL AND ${statusSql}
+       WHERE te.billable = 1 AND te.activity_id IS NOT NULL AND te.status = 'approved'
          AND te.work_date BETWEEN :from AND :to
          AND (NOT EXISTS (SELECT 1 FROM commission_rule_categories WHERE rule_id = :rule)
               OR u.category_id IN (SELECT category_id FROM commission_rule_categories WHERE rule_id = :rule))
        GROUP BY te.user_id HAVING SUM(te.minutes) > :minMinutes
      )`,
   );
+
+  // En konsults TB för provision i [start, end], med bänkgränsen tillämpad.
+  function sourceBasis(userId, start, end) {
+    let tb = 0;
+    let actual = 0;
+    let minutes = 0;
+    let cappedMin = 0;
+    let counter = null; // odebiterbara minuter i sträck, hämtas från historiken först när det behövs
+    for (const day of dailyStmt.all({ user: userId, from: start, to: end, worked })) {
+      const dayTb = day.revenue - day.cost;
+      minutes += day.bill_min + day.non_min;
+      actual += dayTb;
+      if (capMinutes === null) {
+        tb += dayTb;
+      } else if (day.bill_min > 0) {
+        counter = 0; // i uppdrag: räknaren börjar om och hela dagen räknas
+        tb += dayTb;
+      } else {
+        if (counter === null) counter = carryStmt.get({ user: userId, start }).m;
+        const counted = Math.max(0, Math.min(day.non_min, capMinutes - counter));
+        counter += day.non_min;
+        tb += dayTb * (counted / day.non_min);
+        cappedMin += day.non_min - counted;
+      }
+    }
+    return { tb, actual, minutes, cappedMin };
+  }
 
   const now = today();
   const rows = [];
@@ -111,11 +159,15 @@ export function computeCommissions(db, { from, to, approvedOnly = true, earnerId
         earner_name: rule.earner_name,
         earner_category: rule.earner_category,
         tb: null,
+        tb_actual: null,
+        capped_hours: 0,
         percent: null,
         consultants: null,
         amount_per_consultant: null,
         sources: [],
         months: [],
+        raw_commission: 0,
+        floored: false,
         commission: 0,
       };
 
@@ -123,10 +175,20 @@ export function computeCommissions(db, { from, to, approvedOnly = true, earnerId
       const needsCount = rule.kind !== 'tb_percent';
 
       if (needsTb) {
-        row.sources = tbBySource
-          .all({ worked, from: start, to: end, rule: rule.id })
-          .map((s) => ({ user_id: s.user_id, name: s.name, hours: round2(s.minutes / 60), tb: round2(s.revenue - s.cost) }));
-        row.tb = round2(row.sources.reduce((sum, s) => sum + s.tb, 0));
+        row.sources = rule.sources.map((src) => {
+          const b = sourceBasis(src.id, start, end);
+          return {
+            user_id: src.id,
+            name: src.name,
+            hours: round2(b.minutes / 60),
+            tb: round2(b.tb),
+            tb_actual: round2(b.actual),
+            capped_hours: round2(b.cappedMin / 60),
+          };
+        });
+        row.tb = round2(row.sources.reduce((sum, x) => sum + x.tb, 0));
+        row.tb_actual = round2(row.sources.reduce((sum, x) => sum + x.tb_actual, 0));
+        row.capped_hours = round2(row.sources.reduce((sum, x) => sum + x.capped_hours, 0));
       }
       if (needsCount) {
         row.months = monthWindows(start, end).map((w) => ({
@@ -135,21 +197,23 @@ export function computeCommissions(db, { from, to, approvedOnly = true, earnerId
         }));
       }
 
+      let raw;
       if (rule.kind === 'tb_percent') {
         row.percent = rule.percent;
-        row.commission = (row.tb * rule.percent) / 100;
+        raw = (row.tb * rule.percent) / 100;
       } else if (rule.kind === 'per_consultant') {
         row.consultants = row.months.reduce((sum, m) => sum + m.consultants, 0);
         row.amount_per_consultant = rule.amount;
-        row.commission = row.consultants * rule.amount;
+        raw = row.consultants * rule.amount;
       } else {
         const avg = row.months.length ? Math.round(row.months.reduce((s, m) => s + m.consultants, 0) / row.months.length) : 0;
         row.consultants = avg;
         row.percent = tierPercent(rule.tiers, avg);
-        row.commission = (row.tb * row.percent) / 100;
+        raw = (row.tb * row.percent) / 100;
       }
-      if (rule.floor_zero && row.commission < 0) row.commission = 0;
-      row.commission = round2(row.commission);
+      row.raw_commission = round2(raw);
+      row.floored = raw < 0;
+      row.commission = round2(Math.max(0, raw));
       rows.push(row);
     }
   }
