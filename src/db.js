@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // Varje migration körs en gång, i ordning. PRAGMA user_version håller reda på nivån.
-const MIGRATIONS = [
+export const MIGRATIONS = [
   `
   CREATE TABLE settings (
     key   TEXT PRIMARY KEY,
@@ -187,6 +187,69 @@ const MIGRATIONS = [
   );
   CREATE INDEX mileage_user_date ON mileage(user_id, trip_date);
   `,
+
+  // 2: fakturering med radval och avskrivning, samt provisionsregler.
+  (db) => {
+    db.exec(`
+      ALTER TABLE invoices ADD COLUMN invoice_date TEXT;
+      UPDATE invoices SET invoice_date = substr(created_at, 1, 10);
+
+      ALTER TABLE time_entries ADD COLUMN waived_at TEXT;
+      ALTER TABLE time_entries ADD COLUMN waived_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE time_entries ADD COLUMN waived_note TEXT;
+      ALTER TABLE expenses ADD COLUMN waived_at TEXT;
+      ALTER TABLE expenses ADD COLUMN waived_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE expenses ADD COLUMN waived_note TEXT;
+      ALTER TABLE mileage ADD COLUMN waived_at TEXT;
+      ALTER TABLE mileage ADD COLUMN waived_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE mileage ADD COLUMN waived_note TEXT;
+
+      CREATE TABLE commission_rules (
+        id         INTEGER PRIMARY KEY,
+        earner_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name       TEXT NOT NULL DEFAULT '',
+        kind       TEXT NOT NULL CHECK (kind IN ('tb_percent','per_consultant','tb_tiered')),
+        period     TEXT NOT NULL DEFAULT 'month' CHECK (period IN ('month','quarter')),
+        percent    REAL CHECK (percent IS NULL OR (percent >= 0 AND percent <= 100)),
+        amount     REAL CHECK (amount IS NULL OR amount >= 0),
+        tiers      TEXT,
+        min_hours  REAL NOT NULL DEFAULT 0 CHECK (min_hours >= 0),
+        floor_zero INTEGER NOT NULL DEFAULT 1,
+        valid_from TEXT,
+        valid_to   TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX commission_rules_earner ON commission_rules(earner_id);
+
+      CREATE TABLE commission_rule_sources (
+        rule_id INTEGER NOT NULL REFERENCES commission_rules(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (rule_id, user_id)
+      );
+      CREATE INDEX commission_sources_user ON commission_rule_sources(user_id);
+
+      CREATE TABLE commission_rule_categories (
+        rule_id     INTEGER NOT NULL REFERENCES commission_rules(id) ON DELETE CASCADE,
+        category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+        PRIMARY KEY (rule_id, category_id)
+      );
+    `);
+
+    // Gamla kopplingar blir månadsregler med samma procent och period, utan golvning,
+    // så att redan presenterade siffror inte ändras.
+    const links = db.prepare('SELECT * FROM commission_links').all();
+    const insertRule = db.prepare(
+      `INSERT INTO commission_rules (earner_id, name, kind, period, percent, floor_zero, valid_from, valid_to)
+       VALUES (?, ?, 'tb_percent', 'month', ?, 0, ?, ?)`,
+    );
+    const insertSource = db.prepare('INSERT INTO commission_rule_sources (rule_id, user_id) VALUES (?, ?)');
+    const nameOf = db.prepare('SELECT name FROM users WHERE id = ?');
+    for (const l of links) {
+      const id = insertRule.run(l.earner_id, `TB-provision ${nameOf.get(l.source_id)?.name ?? ''}`.trim(), l.percent, l.valid_from, l.valid_to).lastInsertRowid;
+      insertSource.run(id, l.source_id);
+    }
+    db.exec('DROP TABLE commission_links');
+  },
 ];
 
 export function openDb(file) {
@@ -197,12 +260,14 @@ export function openDb(file) {
   return db;
 }
 
-function migrate(db) {
+export function migrate(db) {
   const current = db.prepare('PRAGMA user_version').get().user_version;
   for (let v = current; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
     try {
-      db.exec(MIGRATIONS[v]);
+      const step = MIGRATIONS[v];
+      if (typeof step === 'function') step(db);
+      else db.exec(step);
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
     } catch (err) {

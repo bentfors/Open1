@@ -93,6 +93,23 @@ export function monthRange(offset = 0, now = new Date()) {
   return { from: first.toISOString().slice(0, 10), to: last.toISOString().slice(0, 10) };
 }
 
+export const fmtMonth = (ym) =>
+  new Intl.DateTimeFormat('sv-SE', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(new Date(`${ym}-01T00:00:00Z`));
+
+// Sista dagen i månaden före den som datumet ligger i.
+export function previousMonthEnd(iso) {
+  const d = new Date(`${iso.slice(0, 8)}01T00:00:00Z`);
+  d.setUTCDate(0);
+  return d.toISOString().slice(0, 10);
+}
+
+export function quarterRange(offset = 0, now = new Date()) {
+  const q = Math.floor(now.getMonth() / 3) + offset;
+  const first = new Date(Date.UTC(now.getFullYear(), q * 3, 1));
+  const last = new Date(Date.UTC(now.getFullYear(), q * 3 + 3, 0));
+  return { from: first.toISOString().slice(0, 10), to: last.toISOString().slice(0, 10) };
+}
+
 export const localToday = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

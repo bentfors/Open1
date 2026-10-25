@@ -1,4 +1,5 @@
 import { ADMIN, createUser, startApp } from './helpers.js';
+import { resolveRates } from '../src/domain.js';
 
 // Gemensam testvärld: ett litet företag med kunder, projekt, chefer och provisionsmottagare.
 export async function buildWorld() {
@@ -52,10 +53,6 @@ export async function buildWorld() {
   const absences = (await admin.get('/api/absence-types')).json;
   const vacation = absences.find((a) => a.name === 'Semester').id;
 
-  // Bo och Cia får provision på Annas TB.
-  await admin.post('/api/commission-links', { earner_id: bo.id, source_id: anna.id, percent: 10 });
-  await admin.post('/api/commission-links', { earner_id: cia.id, source_id: anna.id, percent: 5 });
-
   return {
     app,
     admin,
@@ -73,3 +70,34 @@ export async function buildWorld() {
 }
 
 export const entry = (date, target, minutes, extra = {}) => ({ date, minutes, ...target, ...extra });
+
+/**
+ * Annas vecka 3–6 mars 2025, godkänd av admin. Handräknat (Annas timkostnad 500):
+ *   mån  8 h ACME-1 Arbete, medlemspris 1200   intäkt 9600, kostnad 4000
+ *   tis  2 h ACME-1 Möte, ej debiterbart       kostnad 1000
+ *   ons  4 h ACME-2 fast pris, värde 900/tim   värde 3600, kostnad 2000
+ *   tor  8 h semester                          räknas inte
+ * TB = 13200 − 7000 = 6200.
+ */
+export async function seedApprovedWeek(w) {
+  const { anna } = w.users;
+  const put = (d, t, m) => anna.client.put('/api/time/entries', entry(d, t, m));
+  await put('2025-03-03', { activity_id: w.p1Activity }, 480);
+  await put('2025-03-04', { activity_id: w.meeting }, 120);
+  await put('2025-03-05', { activity_id: w.p2Activity }, 240);
+  await put('2025-03-06', { absence_type_id: w.vacation }, 480);
+  await anna.client.post('/api/time/submit', { week_start: '2025-03-03' });
+  const ids = (await w.admin.get('/api/approvals')).json.time.map((r) => r.id);
+  await w.admin.post('/api/approvals/decide', { kind: 'time', ids, decision: 'approve' });
+}
+
+// Lägger in en rad direkt i databasen med korrekta priser. För att slippa attestflödet i tester som inte handlar om det.
+export function addTime(w, { user_id, date, activity_id, minutes, status = 'approved' }) {
+  const r = resolveRates(w.app.db, user_id, activity_id);
+  return w.app.db
+    .prepare(
+      `INSERT INTO time_entries (user_id, work_date, activity_id, minutes, status, billable, bill_rate, cost_rate)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(user_id, date, activity_id, minutes, status, r.billable, r.bill_rate, r.cost_rate).lastInsertRowid;
+}

@@ -47,7 +47,16 @@ describe('inloggning och åtkomst', () => {
 
   test('vanlig användare når inga admin-endpoints', async () => {
     const u = await createUser(app, admin, { email: 'u@t.se', name: 'U' });
-    for (const url of ['/api/users', '/api/customers', '/api/projects', '/api/commission-links', '/api/invoices']) {
+    for (const url of [
+      '/api/users',
+      '/api/customers',
+      '/api/projects',
+      '/api/commission-rules',
+      '/api/invoices',
+      '/api/billing/items?project_id=1',
+      '/api/reports/accrued',
+      '/api/approvals/approved',
+    ]) {
       assert.equal((await u.client.get(url)).status, 403, url);
     }
     assert.equal((await u.client.post('/api/customers', { name: 'X' })).status, 403);

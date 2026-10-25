@@ -19,14 +19,6 @@ const USER_SCHEMA = {
   active: f.bool({ label: 'Aktiv' }),
 };
 
-const LINK_SCHEMA = {
-  earner_id: f.int({ required: true, min: 1, label: 'Provisionsmottagare' }),
-  source_id: f.int({ required: true, min: 1, label: 'Konsult' }),
-  percent: f.num({ required: true, min: 0, max: 100, label: 'Procent' }),
-  valid_from: f.date({ nullable: true, label: 'Gäller från' }),
-  valid_to: f.date({ nullable: true, label: 'Gäller till' }),
-};
-
 const CATEGORY_SCHEMA = {
   name: f.str({ required: true, max: 60, label: 'Namn' }),
   sort: f.int({ min: 0, max: 10000, label: 'Sortering' }),
@@ -153,73 +145,6 @@ export function registerUsers({ db, router }) {
     const used = db.prepare('SELECT COUNT(*) AS n FROM users WHERE category_id = ?').get(id).n;
     if (used) throw conflict(`Kategorin används av ${used} användare. Flytta dem först.`);
     db.prepare('DELETE FROM categories WHERE id = ?').run(id);
-    return { ok: true };
-  });
-
-  // Provisionskopplingar: earner får procent av source:s TB.
-  router.add('GET', '/api/commission-links', { auth: 'admin' }, () =>
-    db
-      .prepare(
-        `SELECT cl.id, cl.earner_id, e.name AS earner_name, ec.name AS earner_category,
-                cl.source_id, s.name AS source_name, sc.name AS source_category,
-                cl.percent, cl.valid_from, cl.valid_to
-         FROM commission_links cl
-         JOIN users e ON e.id = cl.earner_id LEFT JOIN categories ec ON ec.id = e.category_id
-         JOIN users s ON s.id = cl.source_id LEFT JOIN categories sc ON sc.id = s.category_id
-         ORDER BY s.name, e.name, cl.valid_from`,
-      )
-      .all(),
-  );
-
-  function validateLink(data, existing) {
-    const merged = { ...existing, ...data };
-    if (merged.earner_id === merged.source_id) throw bad('Mottagaren kan inte vara samma person som konsulten.');
-    for (const key of ['earner_id', 'source_id']) {
-      if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(merged[key])) throw bad('Användaren finns inte.');
-    }
-    if (merged.valid_from && merged.valid_to && merged.valid_to < merged.valid_from) {
-      throw bad('Slutdatum kan inte ligga före startdatum.');
-    }
-    // Samma mottagare + konsult får inte ha överlappande perioder, då räknas TB:n dubbelt.
-    const overlap = db
-      .prepare(
-        `SELECT 1 FROM commission_links
-         WHERE earner_id = ? AND source_id = ? AND id <> ?
-           AND (valid_to IS NULL OR ? IS NULL OR valid_to >= ?)
-           AND (valid_from IS NULL OR ? IS NULL OR valid_from <= ?)`,
-      )
-      .get(
-        merged.earner_id,
-        merged.source_id,
-        existing?.id ?? 0,
-        merged.valid_from ?? null,
-        merged.valid_from ?? '',
-        merged.valid_to ?? null,
-        merged.valid_to ?? '',
-      );
-    if (overlap) throw conflict('Det finns redan en koppling mellan dessa två för samma period.');
-  }
-
-  router.add('POST', '/api/commission-links', { auth: 'admin' }, ({ body }) => {
-    const data = parse(body, LINK_SCHEMA);
-    data.valid_from ??= null;
-    data.valid_to ??= null;
-    validateLink(data, null);
-    return { id: insertRow(db, 'commission_links', data) };
-  });
-
-  router.add('PATCH', '/api/commission-links/:id', { auth: 'admin' }, ({ params, body }) => {
-    const id = Number(params.id);
-    const existing = db.prepare('SELECT * FROM commission_links WHERE id = ?').get(id);
-    if (!existing) throw notFound();
-    const data = parse(body, LINK_SCHEMA, { partial: true });
-    validateLink(data, existing);
-    updateRow(db, 'commission_links', id, data);
-    return { ok: true };
-  });
-
-  router.add('DELETE', '/api/commission-links/:id', { auth: 'admin' }, ({ params }) => {
-    db.prepare('DELETE FROM commission_links WHERE id = ?').run(Number(params.id));
     return { ok: true };
   });
 

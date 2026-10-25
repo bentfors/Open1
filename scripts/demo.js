@@ -73,10 +73,11 @@ if (fresh) {
   for (const [p, users] of [[p1, [k1, k2]], [p2, [k2, k3]], [p3, [k1, k3]]]) for (const u of users) await admin.put(`/api/projects/${p}/members/${u.id}`, {});
   await admin.put(`/api/projects/${p1}/members/${k1.id}`, { hourly_rate: 1450 });
 
-  await admin.post('/api/commission-links', { earner_id: am.id, source_id: k1.id, percent: 8 });
-  await admin.post('/api/commission-links', { earner_id: bm.id, source_id: k1.id, percent: 4 });
-  await admin.post('/api/commission-links', { earner_id: am.id, source_id: k2.id, percent: 8 });
-  await admin.post('/api/commission-links', { earner_id: bm.id, source_id: k3.id, percent: 6 });
+  // Provision: procent av TB per månad och kvartal, samt koppling till antal konsulter i uppdrag.
+  await admin.post('/api/commission-rules', { earner_id: am.id, name: 'AM 8 % av TB', kind: 'tb_percent', period: 'month', percent: 8, source_ids: [k1.id, k2.id] });
+  await admin.post('/api/commission-rules', { earner_id: bm.id, name: 'BM 5 % av TB per kvartal', kind: 'tb_percent', period: 'quarter', percent: 5, source_ids: [k1.id, k3.id] });
+  await admin.post('/api/commission-rules', { earner_id: chef.id, name: 'Chefsbonus per konsult i uppdrag', kind: 'per_consultant', period: 'month', amount: 500, min_hours: 8, category_ids: [cats['Konsult Talent'], cats['Konsult Next'], cats['Konsult Expert']] });
+  await admin.post('/api/commission-rules', { earner_id: chef.id, name: 'Chef, trappa på antal konsulter', kind: 'tb_tiered', period: 'quarter', source_ids: [k1.id, k2.id, k3.id], tiers: [{ min: 0, percent: 2 }, { min: 3, percent: 4 }] });
 
   const internal = (await admin.get('/api/my/targets')).activities.find((t) => t.code === 'INT-1' && t.activity_name === 'Utbildning').activity_id;
   const plan = [
@@ -104,6 +105,20 @@ if (fresh) {
   const d = addDays(thisMonday, -9);
   await k1.c.post('/api/expenses', { date: d, description: 'Tågbiljett Stockholm–Göteborg', amount: 1290, vat: 77.4, project_id: p1, billable: true });
   await k2.c.post('/api/mileage', { date: d, from_place: 'Kontoret', to_place: 'Nordic Retail', purpose: 'Kundmöte', km: 84, project_id: p2, billable: true });
+  // Fakturera de äldsta veckorna på NR-100 men lämna resten kvar att fakturera.
+  const cutoff = addDays(thisMonday, -21);
+  const open = await admin.get(`/api/billing/items?project_id=${p1}`);
+  const first = open.items.filter((i) => i.selectable && i.date < cutoff);
+  if (first.length) {
+    await admin.post('/api/invoices', {
+      customer_id: kund1,
+      invoice_date: addDays(thisMonday, -14),
+      note: 'Ny webbplattform, första etappen',
+      time_ids: first.filter((i) => i.kind === 'time').map((i) => i.id),
+      expense_ids: first.filter((i) => i.kind === 'expense').map((i) => i.id),
+      mileage_ids: first.filter((i) => i.kind === 'mileage').map((i) => i.id),
+    });
+  }
   console.log('Demodata skapad.');
 }
 

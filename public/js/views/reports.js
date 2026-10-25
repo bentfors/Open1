@@ -1,6 +1,8 @@
-import { get, post, del, qs } from '../api.js';
-import { h, fmtMoney, fmtNum, fmtDate, toast, dataTable, openDialog, confirmDialog, monthRange, optionList, add, setKids } from '../dom.js';
+import { get, qs } from '../api.js';
+import { h, add, setKids, fmtMoney, fmtNum, fmtDate, toast, dataTable, openDialog, monthRange, quarterRange, previousMonthEnd, localToday, optionList } from '../dom.js';
 import { state, isAdmin } from '../state.js';
+
+const round = (n) => Math.round(n * 100) / 100;
 
 const GROUPS = [
   ['project', 'Projekt'],
@@ -22,7 +24,7 @@ function select(id, label, options, value, onchange) {
   return h('div', { class: 'field' }, h('label', { for: id }, label), el);
 }
 
-function periodFields(filter, redraw) {
+function periodFields(filter, redraw, extraQuick = []) {
   const from = h('input', { id: 'r-from', type: 'date', value: filter.from, onchange: (e) => (filter.from = e.target.value) });
   const to = h('input', { id: 'r-to', type: 'date', value: filter.to, onchange: (e) => (filter.to = e.target.value) });
   const quick = (label, range) =>
@@ -41,10 +43,11 @@ function periodFields(filter, redraw) {
       label,
     );
   const year = new Date().getFullYear();
+  const extra = extraQuick.length ? extraQuick : [['I år', { from: `${year}-01-01`, to: `${year}-12-31` }]];
   return [
     h('div', { class: 'field' }, h('label', { for: 'r-from' }, 'Från'), from),
     h('div', { class: 'field' }, h('label', { for: 'r-to' }, 'Till'), to),
-    h('div', { class: 'row' }, quick('Denna månad', monthRange(0)), quick('Förra månaden', monthRange(-1)), quick('I år', { from: `${year}-01-01`, to: `${year}-12-31` })),
+    h('div', { class: 'row' }, quick('Denna månad', monthRange(0)), quick('Förra månaden', monthRange(-1)), extra.map(([label, range]) => quick(label, range))),
   ];
 }
 
@@ -113,26 +116,96 @@ async function timeReport(root) {
 }
 
 // ── TB och provision ────────────────────────────────────────────────────
+const KIND_LABEL = { tb_percent: 'Procent av TB', per_consultant: 'Belopp per konsult i uppdrag', tb_tiered: 'Procent av TB, trappa på antal konsulter' };
+
+function basisText(r) {
+  if (r.kind === 'tb_percent') return `TB ${fmtMoney(r.tb)} × ${fmtNum(r.percent)} %`;
+  if (r.kind === 'per_consultant') return `${fmtNum(r.consultants)} konsultmånader × ${fmtMoney(r.amount_per_consultant)}`;
+  return `TB ${fmtMoney(r.tb)} × ${fmtNum(r.percent)} % (${fmtNum(r.consultants)} ${r.consultants === 1 ? 'konsult' : 'konsulter'} i snitt)`;
+}
+
+function showBasis(r) {
+  const parts = [h('p', {}, h('strong', {}, `${r.earner_name} · ${r.rule_name || KIND_LABEL[r.kind]} · ${r.period_label}`)), h('p', { class: 'muted' }, `${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}${r.complete ? '' : ' (pågår)'}`)];
+  if (r.sources.length) {
+    parts.push(
+      h('div', { class: 'section-title' }, 'TB per konsult'),
+      dataTable({
+        rows: r.sources,
+        columns: [
+          { label: 'Konsult', render: (x) => x.name },
+          { label: 'Timmar', num: true, render: (x) => fmtNum(x.hours) },
+          { label: 'TB', num: true, render: (x) => fmtMoney(x.tb) },
+        ],
+        footer: (c, i) => [`Summa`, '', fmtMoney(r.tb)][i],
+      }),
+    );
+  }
+  if (r.months.length) {
+    parts.push(
+      h('div', { class: 'section-title' }, 'Konsulter i uppdrag per månad'),
+      dataTable({ rows: r.months, columns: [{ label: 'Månad', render: (m) => m.month }, { label: 'Antal', num: true, render: (m) => m.consultants }] }),
+    );
+  }
+  parts.push(h('p', { class: 'section-title' }, `${basisText(r)} = ${fmtMoney(r.commission)}`));
+  openDialog({ title: 'Underlag för provision', wide: true, content: parts });
+}
+
 async function marginReport(root) {
   const admin = isAdmin();
-  const filter = { ...monthRange(0), status: 'approved' };
+  const filter = { ...monthRange(-1), status: 'approved' };
   const result = h('div', { class: 'stack' });
 
   async function run() {
     try {
-      const data = await get(`/api/reports/margin${qs(filter)}`);
+      const [com, margin] = await Promise.all([get(`/api/reports/commission${qs(filter)}`), admin ? get(`/api/reports/margin${qs(filter)}`) : { consultants: [] }]);
       const parts = [];
       if (admin) {
-        const total = data.consultants.reduce((t, c) => ({ revenue: t.revenue + c.revenue, cost: t.cost + c.cost, margin: t.margin + c.margin, hours: t.hours + c.hours }), { revenue: 0, cost: 0, margin: 0, hours: 0 });
+        const total = margin.consultants.reduce((t, c) => ({ revenue: t.revenue + c.revenue, cost: t.cost + c.cost, margin: t.margin + c.margin }), { revenue: 0, cost: 0, margin: 0 });
         parts.push(
-          h('div', { class: 'kpis' }, kpi('Intäkt', fmtMoney(total.revenue)), kpi('Kostnad', fmtMoney(total.cost)), kpi('TB', fmtMoney(total.margin)), kpi('Provision totalt', fmtMoney(data.earners.reduce((s, e) => s + e.commission, 0)))),
+          h('div', { class: 'kpis' }, kpi('Intäkt', fmtMoney(total.revenue)), kpi('Kostnad', fmtMoney(total.cost)), kpi('TB', fmtMoney(total.margin)), kpi('Provision (perioder som överlappar)', fmtMoney(com.earners.reduce((s, e) => s + e.commission, 0)))),
+        );
+      }
+      parts.push(
+        h(
+          'div',
+          { class: 'card flush' },
+          h('div', { class: 'group-head' }, admin ? 'Provision per mottagare' : 'Min provision'),
+          dataTable({
+            rows: com.earners,
+            empty: 'Ingen provision för perioden.',
+            columns: [
+              { label: 'Mottagare', render: (r) => r.name },
+              { label: 'Kategori', render: (r) => r.category || '' },
+              { label: 'Provision', num: true, render: (r) => h('strong', {}, fmtMoney(r.commission)) },
+            ],
+          }),
+        ),
+        h(
+          'div',
+          { class: 'card flush' },
+          h('div', { class: 'group-head' }, 'Per regel och period'),
+          dataTable({
+            rows: com.rows,
+            empty: 'Inga regler med underlag i perioden.',
+            columns: [
+              ...(admin ? [{ label: 'Mottagare', render: (r) => [r.earner_name, ' ', h('span', { class: 'chip' }, r.earner_category || '–')] }] : []),
+              { label: 'Regel', render: (r) => [r.rule_name || KIND_LABEL[r.kind], h('div', { class: 'small muted' }, basisText(r))] },
+              { label: 'Period', render: (r) => [r.period_label, r.complete ? null : h('span', { class: 'chip warn' }, ' pågår')], class: 'nowrap' },
+              { label: 'Provision', num: true, render: (r) => h('strong', { class: r.commission < 0 ? 'neg' : '' }, fmtMoney(r.commission)) },
+              { label: '', class: 'actions', render: (r) => h('button', { class: 'btn sm', type: 'button', onclick: () => showBasis(r) }, 'Underlag') },
+            ],
+          }),
+        ),
+      );
+      if (admin) {
+        parts.push(
           h(
             'div',
             { class: 'card flush' },
             h('div', { class: 'group-head' }, 'TB per konsult'),
             dataTable({
-              rows: data.consultants,
-              empty: 'Ingen debiterad eller rapporterad tid i perioden.',
+              rows: margin.consultants,
+              empty: 'Ingen rapporterad tid i perioden.',
               columns: [
                 { label: 'Konsult', render: (r) => r.name },
                 { label: 'Kategori', render: (r) => r.category || '' },
@@ -148,43 +221,12 @@ async function marginReport(root) {
       }
       parts.push(
         h(
-          'div',
-          { class: 'card flush' },
-          h('div', { class: 'group-head' }, admin ? 'Provision per mottagare' : 'Min provision'),
-          dataTable({
-            rows: data.earners,
-            empty: 'Ingen provision i perioden.',
-            columns: [
-              { label: 'Mottagare', render: (r) => r.name },
-              { label: 'Kategori', render: (r) => r.category || '' },
-              { label: 'Provision', num: true, render: (r) => h('strong', {}, fmtMoney(r.commission)) },
-            ],
-          }),
-        ),
-        h(
-          'div',
-          { class: 'card flush' },
-          h('div', { class: 'group-head' }, 'Underlag'),
-          dataTable({
-            rows: data.commissions,
-            empty: 'Inga kopplingar med tid i perioden.',
-            columns: [
-              ...(admin ? [{ label: 'Mottagare', render: (r) => [r.earner_name, ' ', h('span', { class: 'chip' }, r.earner_category || '–')] }] : []),
-              { label: 'Konsult', render: (r) => [r.source_name, ' ', h('span', { class: 'chip' }, r.source_category || '–')] },
-              { label: 'Gäller', render: (r) => (r.valid_from || r.valid_to ? `${r.valid_from || '…'} – ${r.valid_to || '…'}` : 'Alltid') },
-              { label: 'Timmar', num: true, render: (r) => fmtNum(r.hours) },
-              { label: 'TB', num: true, render: (r) => fmtMoney(r.margin) },
-              { label: 'Andel', num: true, render: (r) => `${fmtNum(r.percent)} %` },
-              { label: 'Provision', num: true, render: (r) => fmtMoney(r.commission) },
-            ],
-          }),
-        ),
-        h(
           'p',
           { class: 'muted small' },
-          'TB = debiterbar intäkt − intern timkostnad. Frånvaro räknas inte. ',
-          data.cost_basis === 'billable' ? 'Kostnad räknas bara på debiterbara timmar.' : 'Kostnad räknas på all projekttid, även ej debiterbar.',
-          ' Fastprisprojekt räknas med sitt timpris som värde. Negativ TB ger negativ provision.',
+          'Provision räknas per hel månad eller kvartal enligt reglerna, även om du väljer ett kortare intervall. Perioder som inte är slut markeras som pågående. ',
+          'TB = debiterbar intäkt − intern timkostnad, frånvaro räknas inte. ',
+          com.cost_basis === 'billable' ? 'Kostnad räknas bara på debiterbara timmar. ' : 'Kostnad räknas på all projekttid, även ej debiterbar. ',
+          'Fastprisprojekt räknas med sitt timpris som värde.',
         ),
       );
       setKids(result, ...parts);
@@ -193,15 +235,17 @@ async function marginReport(root) {
     }
   }
 
-  const csv = h('a', { class: 'btn', href: '#', onclick: (e) => { e.currentTarget.href = `/api/reports/margin${qs({ ...filter, format: 'csv' })}`; } }, 'Exportera CSV');
-  add(root, 
+  const csv = h('a', { class: 'btn', href: '#', onclick: (e) => { e.currentTarget.href = `/api/reports/commission${qs({ ...filter, format: 'csv' })}`; } }, 'Exportera CSV');
+  const year = new Date().getFullYear();
+  add(
+    root,
     h(
       'div',
       { class: 'card' },
       h(
         'div',
         { class: 'filters' },
-        periodFields(filter, run),
+        periodFields(filter, run, [['Detta kvartal', quarterRange(0)], ['Förra kvartalet', quarterRange(-1)], ['I år', { from: `${year}-01-01`, to: `${year}-12-31` }]]),
         select('m-status', 'Underlag', [{ value: 'approved', label: 'Bara godkänd tid' }, { value: 'all', label: 'All tid (förhandsvisning)' }], 'approved', (v) => (filter.status = v)),
         h('button', { class: 'btn primary', type: 'button', onclick: run }, 'Visa'),
         csv,
@@ -214,141 +258,108 @@ async function marginReport(root) {
 
 const kpi = (label, value) => h('div', { class: 'kpi' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value));
 
-// ── Fakturaunderlag ─────────────────────────────────────────────────────
-async function invoiceBasis(root) {
-  const customers = (await get('/api/customers')).filter((c) => c.active);
-  const filter = { ...monthRange(-1), customer_id: '' };
-  const preview = h('div');
-  const history = h('div', { class: 'card flush' });
+// ── Upplupet ────────────────────────────────────────────────────────────
+async function accruedReport(root) {
+  const now = localToday();
+  const filter = { from: '', to: previousMonthEnd(now), as_of: '', group_by: 'customer' };
+  const result = h('div', { class: 'stack' });
 
-  const lineColumns = [
-    { label: 'Typ', render: (r) => r.kind },
-    { label: 'Projekt', render: (r) => r.project },
-    { label: 'Beskrivning', render: (r) => r.description },
-    { label: 'Antal', num: true, render: (r) => `${fmtNum(r.quantity)} ${r.unit}` },
-    { label: 'À-pris', num: true, render: (r) => fmtMoney(r.rate) },
-    { label: 'Belopp', num: true, render: (r) => fmtMoney(r.amount) },
-  ];
-
-  async function loadHistory() {
-    const rows = await get('/api/invoices');
-    setKids(history, 
-      h('div', { class: 'group-head' }, 'Skapade underlag'),
-      dataTable({
-        rows,
-        empty: 'Inga underlag skapade ännu.',
-        columns: [
-          { label: 'Nr', render: (r) => r.number },
-          { label: 'Kund', render: (r) => r.customer_name },
-          { label: 'Period', render: (r) => `${fmtDate(r.period_from)} – ${fmtDate(r.period_to)}` },
-          { label: 'Belopp', num: true, render: (r) => fmtMoney(r.total_amount) },
-          {
-            label: '',
-            class: 'actions',
-            render: (r) => [
-              h('button', { class: 'btn sm', type: 'button', onclick: () => open(r) }, 'Öppna'),
-              ' ',
-              h('a', { class: 'btn sm', href: `/api/invoices/${r.id}?format=csv` }, 'CSV'),
-              ' ',
-              h(
-                'button',
-                {
-                  class: 'btn sm danger',
-                  type: 'button',
-                  onclick: async () => {
-                    if (!(await confirmDialog(`Ångra underlag ${r.number}? Raderna kan faktureras igen.`, { confirmLabel: 'Ångra underlag', danger: true }))) return;
-                    try {
-                      await del(`/api/invoices/${r.id}`);
-                      toast('Underlaget är ångrat.', 'ok');
-                      await loadHistory();
-                    } catch (err) {
-                      toast(err.message, 'error');
-                    }
-                  },
-                },
-                'Ångra',
-              ),
-            ],
-          },
-        ],
-      }),
-    );
-  }
-
-  async function open(r) {
-    const inv = await get(`/api/invoices/${r.id}`);
-    openDialog({
-      title: `Fakturaunderlag ${inv.number} · ${inv.customer_name}`,
-      wide: true,
-      content: [h('p', { class: 'muted' }, `${fmtDate(inv.period_from)} – ${fmtDate(inv.period_to)}${inv.note ? ` · ${inv.note}` : ''}`), dataTable({ columns: lineColumns, rows: inv.lines, footer: (c, i) => (i === 0 ? 'Summa' : c.label === 'Belopp' ? fmtMoney(inv.total) : '') })],
-    });
-  }
-
-  const note = h('input', { id: 'inv-note', type: 'text', maxlength: 500, placeholder: 'Valfri anteckning' });
   async function run() {
-    if (!filter.customer_id) {
-      setKids(preview, h('p', { class: 'muted' }, 'Välj en kund och en period och klicka på Förhandsgranska.'));
-      return;
-    }
     try {
-      const data = await get(`/api/invoices/preview${qs(filter)}`);
-      setKids(preview, 
-        data.unapproved_entries
-          ? h('div', { class: 'alert warn' }, `${data.unapproved_entries} debiterbara tidsrader i perioden är inte godkända och tas inte med.`)
-          : null,
+      const data = await get(`/api/reports/accrued${qs(filter)}`);
+      const t = data.total;
+      const unapproved = (r) => round(r.time_unapproved + r.other_unapproved);
+      const isProject = data.group_by === 'project';
+      setKids(
+        result,
+        h(
+          'div',
+          { class: 'kpis' },
+          kpi('Upplupet, godkänt', fmtMoney(t.total_approved)),
+          kpi('Varav tid', fmtMoney(t.time_approved)),
+          kpi('Ej godkänt', fmtMoney(round(t.time_unapproved + t.other_unapproved))),
+          kpi('Totalt inkl. ej godkänt', fmtMoney(t.total)),
+        ),
         h(
           'div',
           { class: 'card flush' },
-          dataTable({ columns: lineColumns, rows: data.lines, empty: 'Inget godkänt och ofakturerat för perioden.', footer: (c, i) => (i === 0 ? 'Summa' : c.label === 'Belopp' ? fmtMoney(data.total) : '') }),
-          data.lines.length
-            ? h(
-                'div',
-                { class: 'sticky-actions' },
-                note,
-                h(
-                  'button',
-                  {
-                    class: 'btn primary',
-                    type: 'button',
-                    onclick: async () => {
-                      try {
-                        await post('/api/invoices', { ...filter, note: note.value });
-                        toast('Underlaget är skapat.', 'ok');
-                        await run();
-                        await loadHistory();
-                      } catch (err) {
-                        toast(err.message, 'error');
-                      }
-                    },
-                  },
-                  'Skapa underlag och markera som fakturerat',
-                ),
-              )
-            : null,
+          dataTable({
+            rows: data.rows,
+            empty: 'Inget upplupet för perioden. Allt som utförts är fakturerat.',
+            columns: [
+              { label: data.group_title, render: (r) => (isProject ? h('a', { href: `#/fakturering/projekt/${r.key}` }, r.label) : data.group_by === 'customer' ? h('a', { href: `#/fakturering/kund/${r.key}` }, r.label) : r.label) },
+              ...(isProject ? [{ label: 'Kund', render: (r) => r.customer_name }] : []),
+              { label: 'Äldsta', render: (r) => fmtDate(r.oldest), class: 'nowrap' },
+              { label: 'Timmar', num: true, render: (r) => fmtNum(r.hours_approved) },
+              { label: 'Tid godkänd', num: true, render: (r) => fmtMoney(r.time_approved) },
+              { label: 'Utlägg/körning', num: true, render: (r) => fmtMoney(r.other_approved) },
+              { label: 'Summa godkänt', num: true, render: (r) => h('strong', {}, fmtMoney(r.total_approved)) },
+              { label: 'Ej godkänt', num: true, render: (r) => (unapproved(r) ? fmtMoney(unapproved(r)) : '') },
+              ...(t.fixed_hours ? [{ label: 'Fastpris (tim)', num: true, render: (r) => (r.fixed_hours ? fmtNum(r.fixed_hours) : '') }] : []),
+            ],
+            footer: (c, i) => {
+              const cells = [
+                'Summa',
+                ...(isProject ? [''] : []),
+                '',
+                fmtNum(t.hours_approved),
+                fmtMoney(t.time_approved),
+                fmtMoney(t.other_approved),
+                fmtMoney(t.total_approved),
+                fmtMoney(round(t.time_unapproved + t.other_unapproved)),
+                ...(t.fixed_hours ? [fmtNum(t.fixed_hours)] : []),
+              ];
+              return cells[i];
+            },
+          }),
+        ),
+        t.fixed_hours ? h('div', { class: 'alert' }, `Fastpris: ${fmtNum(t.fixed_hours)} timmar (värde enligt timpris ${fmtMoney(t.fixed_value)}) ingår inte, eftersom fast pris faktureras separat.`) : null,
+        h(
+          'p',
+          { class: 'muted small' },
+          `Avser tid, utlägg och körning med datum ${data.from === '0000-01-01' ? 'från början' : `från ${fmtDate(data.from)}`} till och med ${data.to === '9999-12-31' ? 'idag och framåt' : fmtDate(data.to)}. `,
+          `Som fakturerat räknas underlag med fakturadatum till och med ${fmtDate(data.as_of)}. Avslagen tid ingår inte. Ej godkänd tid värderas med priset vid senaste sparning.`,
         ),
       );
     } catch (err) {
-      setKids(preview, h('div', { class: 'alert error' }, err.message));
+      setKids(result, h('div', { class: 'alert error' }, err.message));
     }
   }
 
-  add(root, 
+  const from = h('input', { id: 'a-from', type: 'date', value: filter.from, onchange: (e) => (filter.from = e.target.value) });
+  const to = h('input', { id: 'a-to', type: 'date', value: filter.to, onchange: (e) => (filter.to = e.target.value) });
+  const asOf = h('input', { id: 'a-asof', type: 'date', value: filter.as_of, onchange: (e) => (filter.as_of = e.target.value) });
+  const preset = (label, values) =>
+    h('button', { class: 'btn sm', type: 'button', onclick: () => { Object.assign(filter, values); from.value = filter.from; to.value = filter.to; run(); } }, label);
+  const csv = h('a', { class: 'btn', href: '#', onclick: (e) => { e.currentTarget.href = `/api/reports/accrued${qs({ ...filter, format: 'csv' })}`; } }, 'Exportera CSV');
+  const prevMonth = monthRange(-1);
+
+  add(
+    root,
     h(
       'div',
       { class: 'card' },
       h(
         'div',
         { class: 'filters' },
-        select('inv-customer', 'Kund', optionList(customers, { blank: 'Välj kund …' }), filter.customer_id, (v) => (filter.customer_id = v)),
-        periodFields(filter, run),
-        h('button', { class: 'btn primary', type: 'button', onclick: run }, 'Förhandsgranska'),
+        h('div', { class: 'field' }, h('label', { for: 'a-from' }, 'Från datum (tomt = från början)'), from),
+        h('div', { class: 'field' }, h('label', { for: 'a-to' }, 'Till och med datum'), to),
+        select('a-group', 'Gruppera på', [['customer', 'Kund'], ['project', 'Projekt'], ['user', 'Användare'], ['month', 'Månad'], ['all', 'Totalt']].map(([value, label]) => ({ value, label })), filter.group_by, (v) => (filter.group_by = v)),
+        h('div', { class: 'field' }, h('label', { for: 'a-asof' }, 'Fakturerat till och med (tomt = idag)'), asOf),
+        h('button', { class: 'btn primary', type: 'button', onclick: run }, 'Visa'),
+        csv,
       ),
-      h('p', { class: 'muted small' }, 'Med: godkänd tid på löpande räkning, samt godkända utlägg och körningar som är markerade för vidarefakturering. Fastprisprojekt ingår inte. Belopp är exklusive moms.'),
+      h(
+        'div',
+        { class: 'row', 'aria-label': 'Snabbval' },
+        preset('T.o.m. förra månadens slut', { from: '', to: previousMonthEnd(now) }),
+        preset('T.o.m. idag', { from: '', to: now }),
+        preset('Bara förra månaden', { from: prevMonth.from, to: prevMonth.to }),
+        preset('I år', { from: `${new Date().getFullYear()}-01-01`, to: now }),
+      ),
     ),
-    preview,
-    history,
+    result,
   );
-  await loadHistory();
   await run();
 }
 
@@ -357,7 +368,7 @@ export async function renderReports(root, params) {
   const tabs = [
     ['tid', 'Tidrapport', true],
     ['provision', isAdmin() ? 'TB och provision' : 'Min provision', isAdmin() || earner],
-    ['underlag', 'Fakturaunderlag', isAdmin()],
+    ['upplupet', 'Upplupet', isAdmin()],
   ].filter((t) => t[2]);
   const active = tabs.some((t) => t[0] === params[0]) ? params[0] : 'tid';
   add(root, 
@@ -366,5 +377,5 @@ export async function renderReports(root, params) {
   );
   const body = h('div', { class: 'stack' });
   add(root, body);
-  await { tid: timeReport, provision: marginReport, underlag: invoiceBasis }[active](body);
+  await { tid: timeReport, provision: marginReport, upplupet: accruedReport }[active](body);
 }

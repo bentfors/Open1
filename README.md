@@ -51,26 +51,52 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 
 **Utlägg och körjournal.** Utlägg med kvitto (JPEG, PNG, WebP eller PDF, högst 5 MB) och körd sträcka. Båda kan vidarefaktureras till kund.
 
-**Rapporter.** Tidrapport per projekt, kund, aktivitet, användare, kategori, månad, dag eller frånvarotyp, med CSV-export för svensk Excel. Fakturaunderlag per kund och period. TB och provision.
+**Fakturering.** Allt som rapporteras (tid, utlägg, körning) hamnar i en projektvy under Fakturering. Där väljer du rad för rad vad som ska med på ett fakturaunderlag. Det du inte väljer ligger kvar och dyker upp nästa gång, så att inget glöms bort. Under "Att fakturera" ser du alla projekt som har något ofakturerat, äldsta först. Bara godkända, debiterbara rader på löpande räkning kan faktureras. Övriga rader syns med en förklaring (väntar på attest, ej debiterbar, fast pris). Rader som aldrig ska faktureras kan avskrivas med en anledning. De lämnar då kön och upplupet men finns kvar i projektvyn.
+
+**Upplupet.** Rapporter → Upplupet visar utfört men ännu inte fakturerat för valfri period, räknat på det datum timmarna avser. Förvalt är allt fram till sista dagen i förra månaden. Du kan gruppera på kund, projekt, användare eller månad, och exportera till CSV. Se [Upplupet](#upplupet) nedan.
+
+**Övriga rapporter.** Tidrapport per projekt, kund, aktivitet, användare, kategori, månad, dag eller frånvarotyp, med CSV-export för svensk Excel. TB per konsult och provision.
 
 **Periodlåsning.** Administratör kan låsa perioder till ett datum. Då kan vanliga användare varken ändra eller attestera i perioden.
 
-### Provision på TB
+### Provision
 
-En användare (mottagare) kan kopplas till flera konsulter och få en procentandel av deras TB. Varje koppling kan ha en giltighetsperiod. Det görs under Admin → Provision.
+Under Admin → Provision skapar du regler. Varje regel hör till en mottagare och räknas per **månad eller kvartal**. Det finns tre typer:
+
+| Typ | Räknas så här |
+|---|---|
+| Procent av TB | Procent × summan av TB för de konsulter du valt |
+| Belopp per konsult i uppdrag | Belopp × antal konsulter i uppdrag, summerat över månaderna i perioden |
+| Procent av TB, trappa | Procent av valda konsulters TB, där procenten bestäms av genomsnittligt antal konsulter i uppdrag per månad |
 
 ```
 TB          = debiterbar intäkt − intern timkostnad
 Intäkt      = debiterbara timmar × pris
 Kostnad     = timmar × användarens timkostnad
-Provision   = TB × procent, per tidspost så att kopplingens period respekteras
 ```
 
-- Bara godkänd tid räknas, om man inte väljer "All tid" som förhandsvisning.
-- Frånvaro räknas inte.
+- **Konsult i uppdrag** en månad: mer än *minsta antal timmar* (standard 0, alltså minst en minut) godkända debiterbara timmar den månaden. Du kan begränsa vilka kategorier som räknas.
+- **Trappa**: trappsteget gäller för hela TB:n, inte marginellt. Exempel: 0 → 4 %, 11 → 6 %, 21 → 8 %.
+- **Kvartal** summerar TB över hela kvartalet, så en dålig månad nettas mot en bra. Månadsregler räknas för sig.
+- **Golv**: "Ingen negativ provision" ger 0 i stället för minus för perioden. Standard för nya regler.
+- Regler kan ha giltighetstid. Bara tid inom den räknas.
+- Perioder räknas alltid hela, även om du väljer ett kortare intervall i rapporten, och markeras som pågående tills de är slut.
+- Bara godkänd tid räknas, om man inte väljer "All tid" som förhandsvisning. Frånvaro räknas inte.
 - Under Admin → Inställningar väljer du om ej debiterbar projekttid (utbildning, internt) ska belasta TB. Standard är att den gör det.
 - Fastprisprojekt räknas med sitt timpris som värde i TB, men hamnar inte i fakturaunderlaget.
-- Negativ TB ger negativ provision. Det finns ingen golvning.
+
+Rapporten (Rapporter → TB och provision) visar underlaget för varje rad: vilka konsulter, vilken TB, och hur många konsulter som räknades per månad.
+
+Äldre kopplingar (procent av en konsults TB) har flyttats över till regler av typen procent av TB, per månad och utan golv, så att tidigare siffror inte ändras.
+
+### Upplupet
+
+Upplupet är tid, utlägg och körning som är utförda men inte fakturerade. Rapporten tar tre datum:
+
+- **Från och till** avser det datum timmarna gäller (arbetsdatum), inte när de rapporterades.
+- **Fakturerat till och med** avgör vilka underlag som räknas som fakturerade. Tomt betyder idag. Sätter du det till förra månadens sista dag får du upplupet som det var då, även om underlaget skapades senare. Det är det du vill ha när du stänger en månad i efterhand. Fakturadatum sätts när underlaget skapas.
+
+Godkänt och ej godkänt redovisas var för sig. Avslagen tid ingår inte, och avskriven tid räknas bort från avskrivningsdagen. Fastprisprojektens timmar redovisas för sig eftersom de inte faktureras per timme. Ej godkänd tid värderas med priset vid senaste sparning.
 
 ### Pris
 
@@ -85,7 +111,8 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 | Tidrapporter (timmar) | egen | + egna projekt och underställda | egen | allt |
 | Priser, kostnader, TB | | | | ✔ |
 | Egen provision | | | ✔ | ✔ |
-| Användare, kunder, projekt, fakturaunderlag | | | | ✔ |
+| Användare, kunder, projekt, provisionsregler | | | | ✔ |
+| Fakturering och upplupet | | | | ✔ |
 
 Projektledare ser alltså timmar men inte pengar. Det är ett medvetet val för första versionen.
 
@@ -103,13 +130,15 @@ Projektledare ser alltså timmar men inte pengar. Det är ett medvetet val för 
 
 - Databasen är en SQLite-fil i WAL-läge. Säkerhetskopiera med `sqlite3 data/x-time.sqlite ".backup 'backup.sqlite'"` och kopiera `data/receipts/` med.
 - Inloggningsspärren ligger i minnet och nollställs vid omstart. Kör en enda instans.
-- Tester: `npm test` (51 tester som täcker behörigheter, tidregler, attest, TB/provision och fakturaunderlag).
+- Tester: `npm test` (76 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
 
 ## Begränsningar och antaganden
 
 Jag har inte kunnat läsa Millnets egen dokumentation, så jämförelsen med Flow bygger på dina svar och allmän kännedom om hur den här typen av system fungerar. Följande saknas eller är gissningar:
 
-- **Provisionsmodellen** (procent av TB per koppling) är min tolkning av önskemålet. Hur TB ska räknas, om negativ TB ska golvas, och om procenten kan variera med kategori är inte bestämt.
+- **Provisionsreglerna** är min tolkning av att provision kan hänga på procent av TB per månad eller kvartal, och på antalet konsulter i uppdrag. Hur "i uppdrag" ska avgränsas, hur kvartal räknas för trappan (jag använder snittet av månadsantalen) och om negativ provision ska finnas är inte bestämt av dig. Kontrollera med en period där du vet facit.
+- **Fastprisprojekt** faktureras inte härifrån. Timmarna visas, och kan avskrivas när du fakturerat dem på annat sätt.
+- **Ej debiterbar tid** kan inte göras debiterbar i fakturavyn. Ändra aktivitetens inställning och låt tiden sparas om.
 - **Helgdagar och normtid.** Normen är arbetstid per vecka. Röda dagar räknas inte av.
 - **Ingen integration** mot lön eller bokföring. Export sker via CSV.
 - **Ingen moms** i fakturaunderlaget. Belopp är exklusive moms.

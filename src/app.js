@@ -21,7 +21,8 @@ import { registerTime } from './routes/time.js';
 import { registerExpenses } from './routes/expenses.js';
 import { registerApprovals } from './routes/approvals.js';
 import { registerReports } from './routes/reports.js';
-import { registerInvoices } from './routes/invoices.js';
+import { registerBilling } from './routes/billing.js';
+import { registerCommission } from './routes/commission.js';
 import { registerSettings } from './routes/settings.js';
 
 const DEFAULT_BODY_LIMIT = 256 * 1024;
@@ -61,7 +62,8 @@ export function createApp({ db, dataDir = config.dataDir }) {
   registerExpenses(deps);
   registerApprovals(deps);
   registerReports(deps);
-  registerInvoices(deps);
+  registerBilling(deps);
+  registerCommission(deps);
   registerSettings(deps);
 
   function clientIp(req) {

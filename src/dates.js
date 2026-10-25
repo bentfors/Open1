@@ -35,3 +35,50 @@ export function isWeekend(dateStr) {
   const dow = toUtc(dateStr).getUTCDay();
   return dow === 0 || dow === 6;
 }
+
+const pad = (n) => String(n).padStart(2, '0');
+
+export const monthStart = (d) => `${d.slice(0, 8)}01`;
+
+export function monthEnd(d) {
+  const dt = toUtc(monthStart(d));
+  dt.setUTCMonth(dt.getUTCMonth() + 1, 0);
+  return dt.toISOString().slice(0, 10);
+}
+
+export function quarterStart(d) {
+  const month = Math.floor((Number(d.slice(5, 7)) - 1) / 3) * 3 + 1;
+  return `${d.slice(0, 4)}-${pad(month)}-01`;
+}
+
+export function quarterEnd(d) {
+  const dt = toUtc(quarterStart(d));
+  dt.setUTCMonth(dt.getUTCMonth() + 3, 0);
+  return dt.toISOString().slice(0, 10);
+}
+
+export const previousMonthEnd = (d) => addDays(monthStart(d), -1);
+
+// Alla hela månader eller kvartal som överlappar [from, to].
+export function periods(from, to, type) {
+  const startOf = type === 'quarter' ? quarterStart : monthStart;
+  const endOf = type === 'quarter' ? quarterEnd : monthEnd;
+  const out = [];
+  for (let start = startOf(from); start <= to && out.length < 400; start = addDays(endOf(start), 1)) {
+    const end = endOf(start);
+    const label =
+      type === 'quarter' ? `Q${Math.floor((Number(start.slice(5, 7)) - 1) / 3) + 1} ${start.slice(0, 4)}` : start.slice(0, 7);
+    out.push({ start, end, label });
+  }
+  return out;
+}
+
+// Kalendermånader som överlappar [start, end], avklippta mot intervallet.
+export function monthWindows(start, end) {
+  const out = [];
+  for (let s = monthStart(start); s <= end && out.length < 400; s = addDays(monthEnd(s), 1)) {
+    const e = monthEnd(s);
+    out.push({ start: s < start ? start : s, end: e > end ? end : e });
+  }
+  return out;
+}

@@ -379,52 +379,171 @@ async function categoriesTab(root) {
 }
 
 // ── Provision ───────────────────────────────────────────────────────────
+const RULE_KINDS = [
+  { value: 'tb_percent', label: 'Procent av TB' },
+  { value: 'per_consultant', label: 'Belopp per konsult i uppdrag' },
+  { value: 'tb_tiered', label: 'Procent av TB, trappa på antal konsulter' },
+];
+
+function ruleSummary(r) {
+  const who = r.sources.map((x) => x.name).join(', ');
+  const cats = r.categories.length ? ` (${r.categories.map((c) => c.name).join(', ')})` : '';
+  const hrs = r.min_hours ? `, minst ${fmtNum(r.min_hours)} h` : '';
+  if (r.kind === 'tb_percent') return `${fmtNum(r.percent)} % av TB för ${who}`;
+  if (r.kind === 'per_consultant') return `${fmtMoney(r.amount)} per konsult i uppdrag${cats}${hrs}`;
+  return `${r.tiers.map((t) => `från ${t.min}: ${fmtNum(t.percent)} %`).join(' · ')} av TB för ${who}. Konsulter${cats}${hrs}`;
+}
+
+function checkList(items, selected, title, hint) {
+  const boxes = items.map((i) => ({ id: i.id, input: h('input', { type: 'checkbox', checked: selected.has(i.id) }) }));
+  const el = h(
+    'div',
+    { class: 'field' },
+    h('label', {}, title),
+    h('div', { class: 'checklist' }, boxes.map((b, idx) => h('label', {}, b.input, items[idx].label))),
+    hint ? h('div', { class: 'hint' }, hint) : null,
+  );
+  return { el, read: () => boxes.filter((b) => b.input.checked).map((b) => b.id) };
+}
+
+function tierEditor(initial) {
+  const rows = h('div');
+  const list = [];
+  function addRow(t) {
+    const min = h('input', { type: 'number', min: '0', step: '1', value: t.min, 'aria-label': 'Från antal konsulter' });
+    const pct = h('input', { type: 'number', min: '0', max: '100', step: '0.1', value: t.percent, 'aria-label': 'Procent' });
+    const item = { min, pct };
+    const row = h('div', { class: 'tier-row' }, min, pct, h('button', { class: 'btn sm danger', type: 'button', 'aria-label': 'Ta bort steg', onclick: () => { row.remove(); list.splice(list.indexOf(item), 1); } }, '✕'));
+    list.push(item);
+    add(rows, row);
+  }
+  for (const t of initial?.length ? initial : [{ min: 0, percent: '' }]) addRow(t);
+  const el = h(
+    'div',
+    { class: 'field' },
+    h('label', {}, 'Trappa'),
+    h('div', { class: 'tier-row small muted' }, h('span', {}, 'Från antal konsulter'), h('span', {}, 'Procent av TB')),
+    rows,
+    h('button', { class: 'btn sm', type: 'button', onclick: () => addRow({ min: '', percent: '' }) }, '+ Lägg till steg'),
+    h('div', { class: 'hint' }, 'Det steg som motsvarar antalet konsulter gäller för hela TB:n. Första steget ska börja på 0.'),
+  );
+  return { el, read: () => list.map((x) => ({ min: Number(x.min.value), percent: Number(x.pct.value) })) };
+}
+
 async function commissionTab(root) {
   let box;
   async function reload() {
-    const rows = await get('/api/commission-links');
-    setKids(box, 
+    const rows = await get('/api/commission-rules');
+    setKids(
+      box,
       dataTable({
         rows,
-        empty: 'Inga kopplingar. Lägg till vem som ska få provision på vems TB.',
+        empty: 'Inga regler. Lägg till vem som ska få provision och hur den räknas.',
         columns: [
-          { label: 'Konsult (vars TB)', render: (r) => [r.source_name, ' ', h('span', { class: 'chip' }, r.source_category || '–')] },
-          { label: 'Mottagare (får provision)', render: (r) => [r.earner_name, ' ', h('span', { class: 'chip' }, r.earner_category || '–')] },
-          { label: 'Andel', num: true, render: (r) => `${fmtNum(r.percent)} %` },
-          { label: 'Gäller', render: (r) => (r.valid_from || r.valid_to ? `${r.valid_from || '…'} – ${r.valid_to || '…'}` : 'Alltid') },
-          { label: '', class: 'actions', render: (r) => [actionBtn('Ändra', () => guarded(() => edit(r))), ' ', actionBtn('Ta bort', () => guarded(async () => {
-            if (!(await confirmDialog('Ta bort kopplingen?', { confirmLabel: 'Ta bort', danger: true }))) return;
-            await del(`/api/commission-links/${r.id}`);
-            await reload();
-          }), 'danger')] },
+          { label: 'Mottagare', render: (r) => [r.earner_name, ' ', h('span', { class: 'chip' }, r.earner_category || '–')] },
+          { label: 'Regel', render: (r) => [r.name || RULE_KINDS.find((k) => k.value === r.kind).label, h('div', { class: 'small muted' }, ruleSummary(r))] },
+          { label: 'Period', render: (r) => (r.period === 'quarter' ? 'Kvartal' : 'Månad') },
+          { label: 'Gäller', render: (r) => (r.valid_from || r.valid_to ? `${r.valid_from || '…'} – ${r.valid_to || '…'}` : 'Alltid'), class: 'nowrap' },
+          {
+            label: '',
+            class: 'actions',
+            render: (r) => [
+              actionBtn('Ändra', () => guarded(() => edit(r))),
+              ' ',
+              actionBtn('Ta bort', () => guarded(async () => {
+                if (!(await confirmDialog('Ta bort regeln?', { confirmLabel: 'Ta bort', danger: true }))) return;
+                await del(`/api/commission-rules/${r.id}`);
+                await reload();
+              }), 'danger'),
+            ],
+          },
         ],
       }),
     );
   }
+
   async function edit(existing) {
-    const users = (await get('/api/users')).filter((u) => u.active || existing);
-    const options = optionList(users, { label: personLabel });
-    editDialog({
-      title: existing ? 'Ändra koppling' : 'Ny koppling',
-      values: existing || {},
-      fields: [
-        { name: 'source_id', label: 'Konsult (vars TB det gäller)', type: 'select', options, required: true, full: true },
-        { name: 'earner_id', label: 'Mottagare (får provision)', type: 'select', options, required: true, full: true },
-        { name: 'percent', label: 'Andel av TB (%)', type: 'number', step: '0.1', min: '0', max: '100', required: true },
-        { name: 'valid_from', label: 'Gäller från', type: 'date', nullable: true },
-        { name: 'valid_to', label: 'Gäller till', type: 'date', nullable: true },
+    const [users, categories] = await Promise.all([get('/api/users'), get('/api/categories')]);
+    const people = users.filter((u) => u.active || existing?.sources.some((s) => s.id === u.id) || existing?.earner_id === u.id);
+    const v = existing ? { ...existing } : { kind: 'tb_percent', period: 'month', min_hours: 0, floor_zero: true };
+
+    const main = buildForm(
+      [
+        { name: 'earner_id', label: 'Mottagare (får provisionen)', type: 'select', options: optionList(people, { label: personLabel }), required: true, full: true },
+        { name: 'name', label: 'Namn (valfritt)', maxlength: 100, full: true },
+        { name: 'kind', label: 'Typ', type: 'select', options: RULE_KINDS, full: true },
+        { name: 'period', label: 'Räknas per', type: 'select', options: [{ value: 'month', label: 'Månad' }, { value: 'quarter', label: 'Kvartal' }] },
       ],
-      onSave: async (v) => {
-        if (existing) await patch(`/api/commission-links/${existing.id}`, v);
-        else await post('/api/commission-links', v);
+      v,
+    );
+    const pct = buildForm([{ name: 'percent', label: 'Andel av TB (%)', type: 'number', step: '0.1', min: '0', max: '100', required: true }], v);
+    const amt = buildForm([{ name: 'amount', label: 'Belopp per konsult och månad (kr)', type: 'number', step: '1', min: '0', required: true }], v);
+    const minh = buildForm([{ name: 'min_hours', label: 'Minsta antal debiterbara timmar per månad', type: 'number', step: '1', min: '0', hint: 'En konsult räknas som i uppdrag en månad med mer än så här många godkända debiterbara timmar. 0 betyder minst en minut.' }], v);
+    const floor = buildForm([{ name: 'floor_zero', label: 'Ingen negativ provision (golv vid 0 per period)', type: 'checkbox', full: true }], v);
+    const dates = buildForm([{ name: 'valid_from', label: 'Gäller från', type: 'date', nullable: true }, { name: 'valid_to', label: 'Gäller till', type: 'date', nullable: true }], v);
+    const sources = checkList(people.map((u) => ({ id: u.id, label: personLabel(u) })), new Set((existing?.sources || []).map((x) => x.id)), 'Konsulter vars TB provisionen räknas på');
+    const cats = checkList(categories.map((c) => ({ id: c.id, label: c.name })), new Set((existing?.categories || []).map((x) => x.id)), 'Vilka kategorier räknas som konsulter?', 'Lämna alla omarkerade för att räkna alla.');
+    const tiers = tierEditor(existing?.tiers);
+
+    const sections = {
+      pct: pct.el,
+      amt: amt.el,
+      tiers: tiers.el,
+      sources: sources.el,
+      minh: minh.el,
+      cats: cats.el,
+      floor: floor.el,
+      dates: dates.el,
+    };
+    const visible = {
+      tb_percent: ['pct', 'sources', 'floor', 'dates'],
+      per_consultant: ['amt', 'minh', 'cats', 'dates'],
+      tb_tiered: ['tiers', 'sources', 'minh', 'cats', 'floor', 'dates'],
+    };
+    const kindSelect = main.inputs.get('kind').input;
+    const apply = () => {
+      for (const [name, el] of Object.entries(sections)) el.classList.toggle('hidden', !visible[kindSelect.value].includes(name));
+    };
+    kindSelect.addEventListener('change', apply);
+
+    const error = h('div', { class: 'alert error hidden' });
+    const save = h('button', { class: 'btn primary', type: 'button' }, 'Spara');
+    const { close } = openDialog({
+      title: existing ? 'Ändra provisionsregel' : 'Ny provisionsregel',
+      wide: true,
+      content: [error, main.el, ...Object.values(sections)],
+      actions: [h('button', { class: 'btn', type: 'button', onclick: () => close() }, 'Avbryt'), save],
+    });
+    apply();
+
+    save.addEventListener('click', async () => {
+      error.classList.add('hidden');
+      const body = { ...main.read(), ...dates.read(), min_hours: minh.read().min_hours ?? 0, floor_zero: floor.read().floor_zero };
+      if (body.kind === 'tb_percent') Object.assign(body, pct.read());
+      if (body.kind === 'per_consultant') Object.assign(body, amt.read());
+      if (body.kind === 'tb_tiered') body.tiers = tiers.read();
+      body.source_ids = body.kind === 'per_consultant' ? [] : sources.read();
+      body.category_ids = body.kind === 'tb_percent' ? [] : cats.read();
+      save.disabled = true;
+      try {
+        if (existing) await patch(`/api/commission-rules/${existing.id}`, body);
+        else await post('/api/commission-rules', body);
+        close();
+        toast('Regeln är sparad.', 'ok');
         await reload();
-      },
+      } catch (err) {
+        error.textContent = err.message;
+        error.classList.remove('hidden');
+      } finally {
+        save.disabled = false;
+      }
     });
   }
+
   box = listSection(root, {
-    title: 'Provision på TB',
-    intro: 'En konsult kan ha flera mottagare. Varje mottagare får en andel av konsultens TB under den period kopplingen gäller. Beräkningen syns under Rapporter.',
-    newLabel: '+ Ny koppling',
+    title: 'Provisionsregler',
+    intro: 'Varje regel gäller en mottagare och räknas per månad eller kvartal. Utfallet syns under Rapporter → TB och provision.',
+    newLabel: '+ Ny regel',
     onNew: () => guarded(() => edit(null)),
   });
   await reload();

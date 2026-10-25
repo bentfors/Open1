@@ -1,25 +1,16 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildWorld, entry } from './world.js';
+import { buildWorld, seedApprovedWeek, entry } from './world.js';
 import { toCsv } from '../src/csv.js';
 
-// Alla belopp nedan är handräknade, se kommentarerna.
-describe('TB, provision och fakturaunderlag', () => {
-  let w, anna, dan, bo, cia, eve, carl, admin;
+describe('tidrapporter och TB per konsult', () => {
+  let w, anna, dan, eve, carl, admin;
 
   before(async () => {
     w = await buildWorld();
-    ({ anna, dan, bo, cia, eve, carl } = w.users);
+    ({ anna, dan, eve, carl } = w.users);
     admin = w.admin;
-
-    const put = (d, t, m) => anna.client.put('/api/time/entries', entry(d, t, m));
-    await put('2025-03-03', { activity_id: w.p1Activity }, 480); // 8 h × 1200 = 9600 intäkt, 8 h × 500 = 4000 kostnad
-    await put('2025-03-04', { activity_id: w.meeting }, 120); //   2 h ej debiterbar, kostnad 1000
-    await put('2025-03-05', { activity_id: w.p2Activity }, 240); // 4 h fastpris × 900 = 3600 värde, kostnad 2000
-    await put('2025-03-06', { absence_type_id: w.vacation }, 480); // frånvaro, räknas inte
-    await anna.client.post('/api/time/submit', { week_start: '2025-03-03' });
-    const ids = (await admin.get('/api/approvals')).json.time.map((r) => r.id);
-    await admin.post('/api/approvals/decide', { kind: 'time', ids, decision: 'approve' });
+    await seedApprovedWeek(w);
   });
   after(() => w.close());
 
@@ -53,26 +44,21 @@ describe('TB, provision och fakturaunderlag', () => {
     assert.equal('revenue' in own.rows[0], false);
     assert.equal('cost' in own.rows[0], false);
 
-    // Projektledaren ser tid på sitt projekt men inte Annas frånvaro eller fastprisprojektet.
     const pm = (await dan.client.get(`/api/reports/time?${range}&group_by=project`)).json;
-    assert.deepEqual(pm.rows.map((r) => r.label), ['ACME-1 Plattform']);
-    // Chefen ser sin underställdas allt.
-    assert.equal((await carl.client.get(`/api/reports/time?${range}&group_by=user`)).json.total.hours, 22);
-    // Utomstående ser ingenting.
+    assert.deepEqual(pm.rows.map((r) => r.label), ['ACME-1 Plattform'], 'projektledaren ser bara sitt projekt');
+    assert.equal((await carl.client.get(`/api/reports/time?${range}&group_by=user`)).json.total.hours, 22, 'chefen ser sin underställda');
     assert.equal((await eve.client.get(`/api/reports/time?${range}&group_by=user`)).json.rows.length, 0);
   });
 
-  test('filter: debiterbar, användare och ogiltig period', async () => {
-    const billable = (await admin.get(`/api/reports/time?${range}&group_by=user&billable=yes`)).json;
-    assert.equal(billable.total.hours, 12);
+  test('filter: debiterbar, och ogiltiga perioder', async () => {
+    assert.equal((await admin.get(`/api/reports/time?${range}&group_by=user&billable=yes`)).json.total.hours, 12);
     assert.equal((await admin.get('/api/reports/time?from=2025-03-31&to=2025-03-01')).status, 400);
     assert.equal((await admin.get('/api/reports/time?from=2025-03-01')).status, 400);
     assert.equal((await admin.get(`/api/reports/time?${range}&billable=maybe`)).status, 400);
   });
 
   test('TB per konsult: intäkt 13200 − kostnad 7000 = 6200', async () => {
-    const r = (await admin.get(`/api/reports/margin?${range}`)).json;
-    const a = r.consultants.find((c) => c.name === 'Anna Konsult');
+    const a = (await admin.get(`/api/reports/margin?${range}`)).json.consultants.find((c) => c.name === 'Anna Konsult');
     assert.equal(a.revenue, 13200);
     assert.equal(a.cost, 7000);
     assert.equal(a.margin, 6200);
@@ -80,176 +66,21 @@ describe('TB, provision och fakturaunderlag', () => {
     assert.equal(a.category, 'Konsult Expert');
   });
 
-  test('provision: Bo 10 % = 620 och Cia 5 % = 310', async () => {
-    const r = (await admin.get(`/api/reports/margin?${range}`)).json;
-    const byEarner = Object.fromEntries(r.earners.map((e) => [e.name, e.commission]));
-    assert.equal(byEarner['Bo AM'], 620);
-    assert.equal(byEarner['Cia BM'], 310);
-    const line = r.commissions.find((c) => c.earner_name === 'Bo AM');
-    assert.equal(line.source_name, 'Anna Konsult');
-    assert.equal(line.margin, 6200);
-    assert.equal(line.earner_category, 'AM');
-  });
-
-  test('mottagare ser bara sin egen provision, ingen annans TB', async () => {
-    const mine = (await bo.client.get(`/api/reports/margin?${range}`)).json;
-    assert.deepEqual(mine.earners.map((e) => e.name), ['Bo AM']);
-    assert.equal(mine.consultants.length, 0);
-    assert.equal(mine.commissions.length, 1);
-    const none = (await eve.client.get(`/api/reports/margin?${range}`)).json;
-    assert.equal(none.commissions.length, 0);
-    const annaSelf = (await anna.client.get(`/api/reports/margin?${range}`)).json;
-    assert.equal(annaSelf.commissions.length, 0, 'konsulten ser inte vem som får provision på hens TB');
-  });
-
   test('inställningen "bara debiterbar kostnad" ändrar TB till 7200', async () => {
     await admin.patch('/api/settings', { tb_cost_basis: 'billable' });
-    const r = (await admin.get(`/api/reports/margin?${range}`)).json;
-    assert.equal(r.consultants[0].margin, 7200);
-    assert.equal(r.earners.find((e) => e.name === 'Bo AM').commission, 720);
+    assert.equal((await admin.get(`/api/reports/margin?${range}`)).json.consultants[0].margin, 7200);
     await admin.patch('/api/settings', { tb_cost_basis: 'worked' });
   });
 
-  test('provisionskoppling med giltighetsperiod räknar bara poster inom perioden', async () => {
-    // Dan får 20 % av Annas TB från och med 5 mars: bara fastprisdagen (3600 − 2000 = 1600) → 320.
-    const link = await admin.post('/api/commission-links', {
-      earner_id: dan.id,
-      source_id: anna.id,
-      percent: 20,
-      valid_from: '2025-03-05',
-    });
-    assert.equal(link.status, 200);
-    const r = (await admin.get(`/api/reports/margin?${range}`)).json;
-    assert.equal(r.earners.find((e) => e.name === 'Dan Projektledare').commission, 320);
-
-    const overlap = await admin.post('/api/commission-links', {
-      earner_id: dan.id,
-      source_id: anna.id,
-      percent: 5,
-      valid_from: '2025-04-01',
-    });
-    assert.equal(overlap.status, 409, 'öppen period överlappar');
-    const nonOverlap = await admin.patch(`/api/commission-links/${link.json.id}`, { valid_to: '2025-03-31' });
-    assert.equal(nonOverlap.status, 200);
-    const ok = await admin.post('/api/commission-links', {
-      earner_id: dan.id,
-      source_id: anna.id,
-      percent: 5,
-      valid_from: '2025-04-01',
-    });
-    assert.equal(ok.status, 200);
+  test('TB visas bara för administratörer', async () => {
+    assert.deepEqual((await anna.client.get(`/api/reports/margin?${range}`)).json.consultants, []);
   });
 
-  test('ogiltiga provisionskopplingar avvisas', async () => {
-    const self = await admin.post('/api/commission-links', { earner_id: anna.id, source_id: anna.id, percent: 5 });
-    assert.equal(self.status, 400);
-    assert.equal((await admin.post('/api/commission-links', { earner_id: bo.id, source_id: eve.id, percent: 101 })).status, 400);
-    assert.equal((await admin.post('/api/commission-links', { earner_id: 9999, source_id: eve.id, percent: 5 })).status, 400);
-    assert.equal((await bo.client.post('/api/commission-links', { earner_id: bo.id, source_id: eve.id, percent: 50 })).status, 403);
-  });
-
-  test('provision på ej godkänd tid ingår inte, men kan förhandsvisas', async () => {
+  test('ej godkänd tid ingår först när man ber om det', async () => {
     await anna.client.put('/api/time/entries', entry('2025-03-10', { activity_id: w.p1Activity }, 60));
-    const approvedOnly = (await admin.get(`/api/reports/margin?${range}`)).json;
-    assert.equal(approvedOnly.consultants[0].margin, 6200);
-    const all = (await admin.get(`/api/reports/margin?${range}&status=all`)).json;
-    assert.equal(all.consultants[0].margin, 6200 + 700, '1 h × (1200 − 500)');
+    assert.equal((await admin.get(`/api/reports/margin?${range}`)).json.consultants[0].margin, 6200);
+    assert.equal((await admin.get(`/api/reports/margin?${range}&status=all`)).json.consultants[0].margin, 6900, '1 h × (1200 − 500)');
     await anna.client.put('/api/time/entries', entry('2025-03-10', { activity_id: w.p1Activity }, 0));
-  });
-
-  // Fakturaunderlag ───────────────────────────────────────────────────
-  let invoiceId;
-
-  test('förhandsvisning: bara debiterbar tid på löpande räkning', async () => {
-    const r = (await admin.get(`/api/invoices/preview?customer_id=${w.customer}&${range}`)).json;
-    assert.equal(r.lines.length, 1);
-    assert.equal(r.lines[0].quantity, 8);
-    assert.equal(r.lines[0].rate, 1200);
-    assert.equal(r.total, 9600, 'fastpris och ej debiterbar tid ingår inte');
-  });
-
-  test('utlägg och körning vidarefaktureras när de är godkända', async () => {
-    const noProject = await anna.client.post('/api/expenses', { date: '2025-03-04', description: 'Tåg', amount: 500, billable: true });
-    assert.equal(noProject.status, 400);
-    const exp = await anna.client.post('/api/expenses', {
-      date: '2025-03-04',
-      description: 'Tåg till kund',
-      amount: 500,
-      vat: 30,
-      billable: true,
-      project_id: w.p1,
-    });
-    assert.equal(exp.status, 200);
-    const trip = await anna.client.post('/api/mileage', {
-      date: '2025-03-04',
-      from_place: 'Kontoret',
-      to_place: 'Acme',
-      purpose: 'Kundmöte',
-      km: 100,
-      billable: true,
-      project_id: w.p1,
-    });
-    assert.equal(trip.status, 200);
-
-    // Ej godkänt ingår inte
-    let r = (await admin.get(`/api/invoices/preview?customer_id=${w.customer}&${range}`)).json;
-    assert.equal(r.total, 9600);
-
-    const queue = (await dan.client.get('/api/approvals')).json;
-    assert.equal(queue.expenses.length, 1);
-    assert.equal(queue.mileage.length, 1);
-    assert.equal((await eve.client.post('/api/approvals/decide', { kind: 'expense', ids: [exp.json.id], decision: 'approve' })).status, 403);
-    await dan.client.post('/api/approvals/decide', { kind: 'expense', ids: [exp.json.id], decision: 'approve' });
-    await dan.client.post('/api/approvals/decide', { kind: 'mileage', ids: [trip.json.id], decision: 'approve' });
-
-    r = (await admin.get(`/api/invoices/preview?customer_id=${w.customer}&${range}`)).json;
-    assert.equal(r.lines.length, 3);
-    assert.equal(r.total, 9600 + 500 + 250, '100 km × 2,50 kr');
-
-    // Godkänt utlägg kan inte ändras
-    assert.equal((await anna.client.patch(`/api/expenses/${exp.json.id}`, { amount: 1 })).status, 409);
-    assert.equal((await anna.client.del(`/api/mileage/${trip.json.id}`)).status, 409);
-  });
-
-  test('skapa underlag markerar raderna som fakturerade', async () => {
-    const created = await admin.post('/api/invoices', { customer_id: w.customer, from: '2025-03-01', to: '2025-03-31' });
-    assert.equal(created.status, 200);
-    invoiceId = created.json.id;
-
-    assert.equal((await admin.get(`/api/invoices/preview?customer_id=${w.customer}&${range}`)).json.lines.length, 0);
-    const again = await admin.post('/api/invoices', { customer_id: w.customer, from: '2025-03-01', to: '2025-03-31' });
-    assert.equal(again.status, 400, 'inget kvar att fakturera');
-
-    const detail = (await admin.get(`/api/invoices/${invoiceId}`)).json;
-    assert.equal(detail.total, 10350);
-    assert.equal(detail.lines.length, 3);
-    assert.match(detail.number, /^\d{4}-0001$/);
-    assert.equal((await admin.get('/api/invoices')).json[0].total_amount, 10350);
-
-    const first = w.app.db.prepare('SELECT id FROM time_entries WHERE invoice_id = ?').get(invoiceId);
-    assert.equal((await admin.post('/api/approvals/reopen', { kind: 'time', ids: [first.id] })).status, 409);
-    assert.equal((await anna.client.put('/api/time/entries', entry('2025-03-03', { activity_id: w.p1Activity }, 60))).status, 409);
-  });
-
-  test('underlaget kan exporteras som CSV för svensk Excel', async () => {
-    const r = await admin.get(`/api/invoices/${invoiceId}?format=csv`);
-    assert.equal(r.status, 200);
-    assert.match(r.headers.get('content-type'), /text\/csv/);
-    assert.ok(r.text.startsWith('﻿'), 'BOM');
-    assert.match(r.text, /Typ;Projekt;Beskrivning;Antal;Enhet;À-pris;Belopp/);
-    assert.match(r.text, /10350/);
-  });
-
-  test('ångra underlag gör raderna fakturerbara igen', async () => {
-    assert.equal((await admin.del(`/api/invoices/${invoiceId}`)).status, 200);
-    assert.equal((await admin.get(`/api/invoices/preview?customer_id=${w.customer}&${range}`)).json.total, 10350);
-    assert.equal((await anna.client.get('/api/invoices')).status, 403);
-  });
-
-  test('rapportering över en annan kund eller period lämnar underlaget orört', async () => {
-    const other = (await admin.post('/api/customers', { name: 'Beta AB' })).json.id;
-    assert.equal((await admin.get(`/api/invoices/preview?customer_id=${other}&${range}`)).json.lines.length, 0);
-    assert.equal((await admin.get(`/api/invoices/preview?customer_id=${w.customer}&from=2025-04-01&to=2025-04-30`)).json.lines.length, 0);
   });
 });
 
@@ -281,11 +112,7 @@ describe('utlägg och kvitton', () => {
   });
 
   test('kvitto ses av ägare, admin och attestant men inte av andra', async () => {
-    const exp = await anna.client.post('/api/expenses', {
-      ...base,
-      project_id: w.p1,
-      receipt: { name: 'k.png', data: PNG.toString('base64') },
-    });
+    const exp = await anna.client.post('/api/expenses', { ...base, project_id: w.p1, receipt: { name: 'k.png', data: PNG.toString('base64') } });
     const url = `/api/expenses/${exp.json.id}/receipt`;
     const own = await anna.client.get(url);
     assert.equal(own.status, 200);
@@ -305,6 +132,10 @@ describe('utlägg och kvitton', () => {
 
   test('icke-medlem kan inte lägga utlägg på projekt', async () => {
     assert.equal((await eve.client.post('/api/expenses', { ...base, project_id: w.p1 })).status, 403);
+  });
+
+  test('vidarefakturering kräver ett projekt', async () => {
+    assert.equal((await anna.client.post('/api/expenses', { ...base, billable: true })).status, 400);
   });
 
   test('avslag kan rättas och skickas in igen', async () => {

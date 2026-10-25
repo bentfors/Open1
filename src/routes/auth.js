@@ -24,7 +24,7 @@ const publicUser = (db, u) => ({
   weekly_hours: u.weekly_hours,
   must_change_password: !!u.must_change_password,
   // Styr om fliken Provision visas för vanliga användare.
-  is_earner: !!db.prepare('SELECT 1 FROM commission_links WHERE earner_id = ? LIMIT 1').get(u.id),
+  is_earner: !!db.prepare('SELECT 1 FROM commission_rules WHERE earner_id = ? LIMIT 1').get(u.id),
 });
 
 export function registerAuth({ db, router }) {

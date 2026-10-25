@@ -9,6 +9,7 @@ import { renderMileage } from './views/mileage.js';
 import { renderReports } from './views/reports.js';
 import { renderAdmin } from './views/admin.js';
 import { renderAccount } from './views/account.js';
+import { renderBilling } from './views/billing.js';
 
 const app = document.getElementById('app');
 
@@ -18,6 +19,7 @@ const ROUTES = {
   korjournal: { label: 'Körjournal', view: renderMileage },
   attest: { label: 'Attest', view: renderApprovals, badge: true },
   rapporter: { label: 'Rapporter', view: renderReports },
+  fakturering: { label: 'Fakturering', view: renderBilling, admin: true },
   admin: { label: 'Admin', view: renderAdmin, admin: true },
   konto: { label: 'Mitt konto', view: renderAccount, hidden: true },
 };
