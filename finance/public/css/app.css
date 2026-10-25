@@ -90,7 +90,7 @@ strong { color: var(--text); font-weight: 500; }
   padding: 0 16px;
   display: flex;
   align-items: center;
-  gap: 1.4rem;
+  gap: 0 1.4rem;
   min-height: 64px;
   flex-wrap: wrap;
 }
@@ -103,9 +103,9 @@ strong { color: var(--text); font-weight: 500; }
   line-height: 1;
 }
 .brand:hover { color: var(--text); }
-.nav { display: flex; flex-wrap: wrap; gap: 0 0.1rem; flex: 1; }
+.nav { display: flex; flex-wrap: wrap; gap: 0 0.1rem; order: 3; flex-basis: 100%; margin: 0 -0.6rem; }
 .nav a {
-  padding: 0.95rem 0.6rem;
+  padding: 0.55rem 0.6rem 0.7rem;
   color: var(--muted);
   text-decoration: none;
   font-size: 0.8rem;
@@ -131,7 +131,7 @@ strong { color: var(--text); font-weight: 500; }
   line-height: 1.3rem;
   letter-spacing: 0;
 }
-.userbox { display: flex; align-items: center; gap: 0.8rem; white-space: nowrap; }
+.userbox { display: flex; align-items: center; gap: 0.8rem; white-space: nowrap; margin-left: auto; }
 .userbox a { color: var(--muted); font-size: 0.9rem; }
 main { max-width: 1200px; margin: 0 auto; padding: 28px 16px 70px; }
 .subnav { display: flex; gap: 0.5rem; margin-bottom: 1.2rem; flex-wrap: wrap; }
