@@ -17,6 +17,7 @@ const KINDS = {
     reopenTo: 'open',
   },
   expense: {
+    bm: true,
     table: 'expenses',
     date: 'expense_date',
     from: `expenses x JOIN users u ON u.id = x.user_id LEFT JOIN projects p ON p.id = x.project_id`,
@@ -24,6 +25,7 @@ const KINDS = {
     reopenTo: 'submitted',
   },
   mileage: {
+    bm: true,
     table: 'mileage',
     date: 'trip_date',
     from: `mileage x JOIN users u ON u.id = x.user_id LEFT JOIN projects p ON p.id = x.project_id`,

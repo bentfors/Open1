@@ -1,6 +1,6 @@
 import { get, qs } from '../api.js';
 import { h, add, setKids, fmtMoney, fmtNum, fmtDate, toast, dataTable, openDialog, monthRange, quarterRange, previousMonthEnd, localToday, optionList } from '../dom.js';
-import { state, isAdmin } from '../state.js';
+import { state, isAdmin, isFinance } from '../state.js';
 
 const round = (n) => Math.round(n * 100) / 100;
 
@@ -53,7 +53,7 @@ function periodFields(filter, redraw, extraQuick = []) {
 
 // ── Tidrapport ──────────────────────────────────────────────────────────
 async function timeReport(root) {
-  const admin = isAdmin();
+  const admin = isFinance(); // ekonomi och administratörer ser allt, även pengar
   const filter = { ...monthRange(0), group_by: 'project', billable: '', status: '', user_id: '', customer_id: '', project_id: '', category_id: '' };
   const [people, customers, projects, categories] = await Promise.all([
     get('/api/people'),
@@ -110,7 +110,7 @@ async function timeReport(root) {
   add(root, 
     h('div', { class: 'card' }, h('div', { class: 'filters' }, fields, h('button', { class: 'btn primary', type: 'button', onclick: run }, 'Visa'), csv)),
     result,
-    admin ? null : h('p', { class: 'muted small' }, 'Du ser tid för dig själv, dina projekt (som projektledare) och dina underställda. Priser och kostnader visas bara för administratörer.'),
+    admin ? null : h('p', { class: 'muted small' }, 'Du ser tid för dig själv, dina projekt (som projektledare) och dina underställda. Priser och kostnader visas bara för administratörer och ekonomi.'),
   );
   await run();
 }
@@ -373,7 +373,7 @@ export async function renderReports(root, params) {
   const tabs = [
     ['tid', 'Tidrapport', true],
     ['provision', isAdmin() ? 'TB och provision' : 'Min provision', isAdmin() || earner],
-    ['upplupet', 'Upplupet', isAdmin()],
+    ['upplupet', 'Upplupet', isFinance()],
   ].filter((t) => t[2]);
   const active = tabs.some((t) => t[0] === params[0]) ? params[0] : 'tid';
   add(root, 

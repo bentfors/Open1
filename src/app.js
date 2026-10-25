@@ -104,6 +104,7 @@ export function createApp({ db, dataDir = config.dataDir }) {
     if (auth !== 'public') {
       if (!user) throw new HttpError(401, 'Du är inte inloggad.', 'UNAUTHENTICATED');
       if (auth === 'admin' && user.role !== 'admin') throw new HttpError(403, 'Kräver administratör.');
+      if (auth === 'finance' && user.role !== 'admin' && !user.finance) throw new HttpError(403, 'Kräver ekonomibehörighet.');
       if (user.must_change_password && !route.opts.allowPasswordChange) {
         throw new HttpError(403, 'Du måste byta lösenord först.', 'PASSWORD_CHANGE_REQUIRED');
       }

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { HANDLED, bad, conflict, forbidden, notFound } from '../http.js';
 import { f, parse, optDate, optId } from '../validate.js';
 import { insertRow, updateRow } from '../db.js';
-import { getSettings, isAdmin } from '../domain.js';
+import { getSettings, isAdmin, isFinance } from '../domain.js';
 
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 
@@ -178,12 +178,13 @@ export function registerExpenses({ db, router, dataDir }) {
   router.add('GET', '/api/expenses/:id/receipt', {}, ({ user, params, res }) => {
     const row = db
       .prepare(
-        `SELECT e.user_id, e.receipt_file, e.receipt_type, e.receipt_name, p.manager_id AS pm, u.manager_id AS um
+        `SELECT e.user_id, e.receipt_file, e.receipt_type, e.receipt_name, p.manager_id AS pm, u.manager_id AS um, u.bm_id AS bm
          FROM expenses e JOIN users u ON u.id = e.user_id LEFT JOIN projects p ON p.id = e.project_id WHERE e.id = ?`,
       )
       .get(Number(params.id));
     if (!row || !row.receipt_file) throw notFound('Kvittot finns inte.');
-    const allowed = isAdmin(user) || row.user_id === user.id || row.pm === user.id || (!row.pm && row.um === user.id);
+    // Ägaren, BM, projektledaren, chefen när ingen annan finns, samt administratörer och ekonomi (som fakturerar utläggen).
+    const allowed = isFinance(user) || row.user_id === user.id || row.bm === user.id || row.pm === user.id || (!row.pm && !row.bm && row.um === user.id);
     if (!allowed) throw forbidden();
     const file = path.join(receiptDir, path.basename(row.receipt_file));
     if (!fs.existsSync(file)) throw notFound('Kvittot finns inte.');

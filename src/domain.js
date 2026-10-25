@@ -20,6 +20,8 @@ export function getSettings(db) {
 }
 
 export const isAdmin = (user) => user.role === 'admin';
+// Ekonomiadministratörer och administratörer hanterar fakturering och ekonomirapporter.
+export const isFinance = (user) => user.role === 'admin' || !!user.finance;
 
 /**
  * Prioritet för timpris (debitering): projektmedlem > aktivitet > projekt > användarens standardpris.
@@ -50,7 +52,7 @@ export function resolveRates(db, userId, activityId) {
  * SQL-villkor för "den här användaren får attestera raden".
  * Kräver namngivna parametrar :isAdmin och :actor, se approverParams.
  * - Admin får attestera allt.
- * - Har en anställd en BM attesterar BM all hens tid, oavsett projekt (bm = true, bara för tid).
+ * - Har en anställd en BM attesterar BM allt hen rapporterar (tid, utlägg, körning), oavsett projekt.
  *   Då attesterar varken projektledare eller chef.
  * - Annars attesterar projektledaren tid/utlägg/körning på sina projekt.
  * - Allt utan projekt, eller på projekt utan projektledare, attesteras av den anställdes chef.

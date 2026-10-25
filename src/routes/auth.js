@@ -19,6 +19,7 @@ const publicUser = (db, u) => ({
   email: u.email,
   name: u.name,
   role: u.role,
+  finance: u.role === 'admin' || !!u.finance,
   category_id: u.category_id,
   manager_id: u.manager_id,
   weekly_hours: u.weekly_hours,

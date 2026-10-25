@@ -43,7 +43,7 @@ function assertDates(data, existing) {
 }
 
 export function registerProjects({ db, router }) {
-  router.add('GET', '/api/projects', { auth: 'admin' }, () =>
+  router.add('GET', '/api/projects', { auth: 'finance' }, () =>
     db
       .prepare(
         `SELECT p.*, c.name AS customer_name, m.name AS manager_name,

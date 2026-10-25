@@ -57,7 +57,7 @@ export function userForSession(db, token) {
   return (
     db
       .prepare(
-        `SELECT u.id, u.email, u.name, u.role, u.category_id, u.manager_id, u.weekly_hours,
+        `SELECT u.id, u.email, u.name, u.role, u.finance, u.category_id, u.manager_id, u.weekly_hours,
                 u.must_change_password
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = ? AND s.expires_at > datetime('now') AND u.active = 1`,

@@ -16,3 +16,5 @@ export async function refreshApprovalCount() {
 }
 
 export const isAdmin = () => state.user?.role === 'admin';
+// Ekonomiadministratörer och administratörer: fakturering och ekonomirapporter.
+export const isFinance = () => !!state.user?.finance;

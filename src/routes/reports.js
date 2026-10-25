@@ -1,6 +1,6 @@
 import { HANDLED, bad, sendText } from '../http.js';
 import { optDate, optId } from '../validate.js';
-import { getSettings, isAdmin, round2 } from '../domain.js';
+import { getSettings, isAdmin, isFinance, round2 } from '../domain.js';
 import { toCsv } from '../csv.js';
 import { computeCommissions, summarizeEarners } from '../commission.js';
 import { ITEMS_CTE } from '../billing.js';
@@ -44,14 +44,14 @@ function period(query) {
 
 export function registerReports({ db, router }) {
   /**
-   * Tidrapport. Admin ser allt inklusive pengar. Övriga ser tid för sig själva, sina projekt
+   * Tidrapport. Administratörer och ekonomi ser allt inklusive pengar. Övriga ser tid för sig själva, sina projekt
    * (som projektledare) och sina direkt underställda, men aldrig priser, kostnader eller TB.
    */
   router.add('GET', '/api/reports/time', {}, ({ user, query, res }) => {
     const { from, to } = period(query);
     const groupBy = Object.hasOwn(GROUPS, query.group_by) ? query.group_by : 'project';
     const g = GROUPS[groupBy];
-    const admin = isAdmin(user);
+    const admin = isFinance(user); // administratörer och ekonomi ser allt, inklusive pengar
 
     const params = {
       from,
@@ -218,7 +218,7 @@ export function registerReports({ db, router }) {
    * så en rapport för förra månadens slut visar det som var ofakturerat då, även om det fakturerats senare.
    * Fastprisprojektens timmar redovisas för sig eftersom de inte faktureras per timme.
    */
-  router.add('GET', '/api/reports/accrued', { auth: 'admin' }, ({ query, res }) => {
+  router.add('GET', '/api/reports/accrued', { auth: 'finance' }, ({ query, res }) => {
     const from = optDate(query.from, 'Från') ?? '0000-01-01';
     const to = optDate(query.to, 'Till') ?? '9999-12-31';
     if (to < from) throw bad('Tilldatum kan inte ligga före fråndatum.');

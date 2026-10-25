@@ -27,7 +27,7 @@ const placeholders = (ids) => ids.map(() => '?').join(',');
 
 export function registerBilling({ db, router }) {
   // ── Projekt- och kundvy ───────────────────────────────────────────────
-  router.add('GET', '/api/billing/items', { auth: 'admin' }, ({ query }) => {
+  router.add('GET', '/api/billing/items', { auth: 'finance' }, ({ query }) => {
     const project = optId(query.project_id, 'Projekt') ?? null;
     const customer = optId(query.customer_id, 'Kund') ?? null;
     if (!project && !customer) throw bad('Ange projekt eller kund.');
@@ -134,7 +134,7 @@ export function registerBilling({ db, router }) {
   // ── Avskrivning ───────────────────────────────────────────────────────
   // Rader som aldrig ska faktureras (kulans timmar, fast pris som faktureras separat) lämnar kön
   // och upplupet, men finns kvar i projektvyn under "Avskrivet".
-  router.add('POST', '/api/billing/waive', { auth: 'admin' }, ({ user, body }) => {
+  router.add('POST', '/api/billing/waive', { auth: 'finance' }, ({ user, body }) => {
     const ids = idLists(body);
     const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
     if (!note) throw bad('Ange en anledning.');
@@ -152,7 +152,7 @@ export function registerBilling({ db, router }) {
     });
   });
 
-  router.add('POST', '/api/billing/restore', { auth: 'admin' }, ({ body }) => {
+  router.add('POST', '/api/billing/restore', { auth: 'finance' }, ({ body }) => {
     const ids = idLists(body);
     return tx(db, () => {
       let n = 0;
@@ -242,7 +242,7 @@ export function registerBilling({ db, router }) {
                 AND m.invoice_id IS NULL AND m.waived_at IS NULL`,
   };
 
-  router.add('POST', '/api/invoices', { auth: 'admin' }, ({ user, body }) => {
+  router.add('POST', '/api/invoices', { auth: 'finance' }, ({ user, body }) => {
     const customerId = reqId(body.customer_id, 'Kund');
     const ids = idLists(body);
     const data = parse(body, {
@@ -290,7 +290,7 @@ export function registerBilling({ db, router }) {
     return inv;
   };
 
-  router.add('GET', '/api/invoices', { auth: 'admin' }, () =>
+  router.add('GET', '/api/invoices', { auth: 'finance' }, () =>
     db
       .prepare(
         `SELECT inv.id, inv.customer_id, c.name AS customer_name, inv.period_from, inv.period_to, inv.invoice_date,
@@ -300,7 +300,7 @@ export function registerBilling({ db, router }) {
       .all(),
   );
 
-  router.add('GET', '/api/invoices/:id', { auth: 'admin' }, ({ params, query, res }) => {
+  router.add('GET', '/api/invoices/:id', { auth: 'finance' }, ({ params, query, res }) => {
     const inv = loadInvoice(Number(params.id));
     const { lines, total } = buildLines(inv.id);
     if (query.format === 'csv') {
@@ -322,7 +322,7 @@ export function registerBilling({ db, router }) {
   });
 
   // Ångra underlaget: raderna blir fakturerbara igen.
-  router.add('DELETE', '/api/invoices/:id', { auth: 'admin' }, ({ params }) => {
+  router.add('DELETE', '/api/invoices/:id', { auth: 'finance' }, ({ params }) => {
     const id = Number(params.id);
     loadInvoice(id);
     tx(db, () => {

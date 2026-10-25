@@ -52,6 +52,7 @@ if (fresh) {
   const am = await mk('am@demo.test', 'Axel Andersson', 'AM');
   const bm = await mk('bm@demo.test', 'Berit Björk', 'BM');
   const pl = await mk('pl@demo.test', 'Peter Projektledare', 'TA');
+  await mk('ekonomi@demo.test', 'Ella Ekonomi', 'OH', { finance: true });
   const k1 = await mk('erik@demo.test', 'Erik Expert', 'Konsult Expert', { manager_id: chef.id, bm_id: bm.id, cost_rate: 650 });
   const k2 = await mk('nora@demo.test', 'Nora Next', 'Konsult Next', { manager_id: chef.id, bm_id: bm.id, cost_rate: 500 });
   const k3 = await mk('tim@demo.test', 'Tim Talent', 'Konsult Talent', { manager_id: chef.id, bm_id: bm.id, cost_rate: 380 });
@@ -142,5 +143,6 @@ console.log(`  Admin:        admin@demo.test / ${PASSWORD}`);
 console.log(`  Konsult:      erik@demo.test, nora@demo.test, tim@demo.test`);
 console.log(`  AM / BM:      am@demo.test, bm@demo.test  (provision)`);
 console.log(`  BM (attest):  bm@demo.test attesterar alla konsulters tid`);
+console.log(`  Ekonomi:      ekonomi@demo.test (fakturering och ekonomirapporter)`);
 console.log(`  Chef / PL:    chef@demo.test, pl@demo.test`);
 console.log(`  Lösenord för alla: ${PASSWORD}\n`);

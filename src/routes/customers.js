@@ -15,7 +15,7 @@ const CUSTOMER_SCHEMA = {
 };
 
 export function registerCustomers({ db, router }) {
-  router.add('GET', '/api/customers', { auth: 'admin' }, () =>
+  router.add('GET', '/api/customers', { auth: 'finance' }, () =>
     db
       .prepare(
         `SELECT c.*, (SELECT COUNT(*) FROM projects p WHERE p.customer_id = c.id) AS projects

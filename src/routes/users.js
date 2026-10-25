@@ -4,13 +4,14 @@ import { insertRow, updateRow, tx } from '../db.js';
 import { hashPassword, checkPasswordPolicy, destroyUserSessions } from '../auth.js';
 import { isAdmin } from '../domain.js';
 
-const USER_COLUMNS = `u.id, u.email, u.name, u.role, u.category_id, c.name AS category_name, u.manager_id,
+const USER_COLUMNS = `u.id, u.email, u.name, u.role, u.finance, u.category_id, c.name AS category_name, u.manager_id,
   m.name AS manager_name, u.bm_id, bm.name AS bm_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.active, u.must_change_password`;
 
 const USER_SCHEMA = {
   email: f.email({ required: true, label: 'E-post' }),
   name: f.str({ required: true, max: 100, label: 'Namn' }),
   role: f.oneOf(['admin', 'user'], { required: true, label: 'Roll' }),
+  finance: f.bool({ label: 'Ekonomiadministratör' }),
   category_id: f.int({ nullable: true, min: 1, label: 'Kategori' }),
   manager_id: f.int({ nullable: true, min: 1, label: 'Chef' }),
   bm_id: f.int({ nullable: true, min: 1, label: 'BM' }),

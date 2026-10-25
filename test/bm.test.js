@@ -60,14 +60,24 @@ describe('BM attesterar konsulters tid', () => {
     assert.equal((await eve.client.get('/api/reports/time?from=2025-03-01&to=2025-03-31&group_by=user')).json.rows.length, 0);
   });
 
-  test('utlägg och körning följer fortsatt projektledaren', async () => {
-    await anna.client.post('/api/expenses', { date: '2025-03-04', description: 'Tåg', amount: 100, project_id: w.p1 });
-    assert.equal((await dan.client.get('/api/approvals')).json.expenses.length, 1);
-    assert.equal((await cia.client.get('/api/approvals')).json.expenses.length, 0);
+  test('utlägg och körning attesteras också av BM, inte av projektledaren', async () => {
+    const exp = await anna.client.post('/api/expenses', { date: '2025-03-04', description: 'Tåg', amount: 100, project_id: w.p1 });
+    const trip = await anna.client.post('/api/mileage', { date: '2025-03-04', purpose: 'Kundmöte', km: 50, project_id: w.p1 });
+    const mine = (await cia.client.get('/api/approvals')).json;
+    assert.deepEqual([mine.expenses.length, mine.mileage.length], [1, 1], 'BM ser båda');
+    const theirs = (await dan.client.get('/api/approvals')).json;
+    assert.deepEqual([theirs.expenses.length, theirs.mileage.length], [0, 0], 'projektledaren ser inga');
+    assert.equal((await dan.client.post('/api/approvals/decide', { kind: 'expense', ids: [exp.json.id], decision: 'approve' })).status, 403);
+    assert.equal((await carl.client.post('/api/approvals/decide', { kind: 'mileage', ids: [trip.json.id], decision: 'approve' })).status, 403);
+    assert.equal((await cia.client.post('/api/approvals/decide', { kind: 'expense', ids: [exp.json.id], decision: 'approve' })).status, 200);
+    assert.equal((await cia.client.post('/api/approvals/decide', { kind: 'mileage', ids: [trip.json.id], decision: 'reject', note: 'Fel sträcka' })).status, 200);
+    assert.equal((await cia.client.get('/api/approvals/count')).json.count, 0);
   });
 
   test('utan BM gäller den vanliga ordningen igen', async () => {
     assert.equal((await admin.patch(`/api/users/${anna.id}`, { bm_id: null })).status, 200);
+    await anna.client.post('/api/expenses', { date: '2025-03-05', description: 'Lunch', amount: 90, project_id: w.p1 });
+    assert.equal((await dan.client.get('/api/approvals')).json.expenses.length, 1, 'projektledaren attesterar utlägg igen');
     await anna.client.put('/api/time/entries', entry('2025-03-12', { activity_id: w.p1Activity }, 60));
     assert.equal(await submitWeek(anna.client, '2025-03-10'), 200);
     assert.equal((await queue(dan)).length, 1, 'projektledaren attesterar');

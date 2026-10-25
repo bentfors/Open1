@@ -45,9 +45,11 @@ Kör bakom en https-proxy. Proxyn måste behålla `Host`-headern, eftersom x-tim
 
 **Struktur.** Kund → Projekt → Aktivitet. Aktiviteter är debiterbara eller inte. Projekt har projektledare, debiteringsform (löpande, fast pris, internt), timpris, budget, datum och medlemmar. Ett projekt kan vara öppet för alla.
 
-**Användare.** Roll (administratör eller användare), kategori (AM, BM, TA, Konsult Talent … redigerbar), chef, intern timkostnad, standardpris och arbetstid per vecka.
+**Användare.** Roll (administratör eller användare), ekonomibehörighet, kategori (AM, BM, TA, Konsult Talent … redigerbar), chef, intern timkostnad, standardpris och arbetstid per vecka.
 
-**Attest.** Varje konsult har en **BM**, som attesterar all hens tid (projekttid och frånvaro) oavsett projekt. BM sätts på användaren under Admin → Användare. Har en användare ingen BM gäller den äldre ordningen: projektledaren attesterar tid på sina projekt, och det som saknar projektledare går till den anställdes chef. Utlägg och körningar attesteras alltid av projektledaren (annars chefen). Ingen attesterar sin egen rad, utom administratör. Avslag kräver en anledning och går tillbaka till användaren. Administratör kan öppna godkänd tid igen (Attest → Godkända).
+**Attest.** Varje konsult har en **BM (konsultchef)**, som attesterar allt hen rapporterar: tid (projekttid och frånvaro), utlägg och körningar, oavsett projekt. BM sätts på användaren under Admin → Användare. Har en användare ingen BM gäller den äldre ordningen: projektledaren attesterar på sina projekt, och det som saknar projektledare går till den anställdes chef. Ingen attesterar sin egen rad, utom administratör. Avslag kräver en anledning och går tillbaka till användaren. Administratör kan öppna godkänd tid igen (Attest → Godkända).
+
+**Fakturering avgörs av ekonomi, inte av den som attesterar.** Attest svarar på "stämmer det som rapporterats?". Vad som sedan faktureras, avskrivs eller räknas upp i upplupet avgörs av ekonomiadministratörer. De får en egen behörighet på användaren (Admin → Användare → Ekonomiadministratör) och har sedan Fakturering, upplupet och tidrapporter med pengar, men inga andra administratörsrättigheter. Den som attesterar kan alltså inte fakturera, och den som fakturerar kan inte attestera andras tid.
 
 **Utlägg och körjournal.** Utlägg med kvitto (JPEG, PNG, WebP eller PDF, högst 5 MB) och körd sträcka. Båda kan vidarefaktureras till kund.
 
@@ -141,17 +143,20 @@ Priset på en tidspost väljs i den här ordningen: medlemmens eget pris i proje
 
 ## Behörigheter
 
-| | Användare | Projektledare / chef | Mottagare av provision | Administratör |
-|---|---|---|---|---|
-| Egen tid, utlägg, körjournal | ✔ | ✔ | ✔ | ✔ |
-| Attestera tid | | som BM: sina konsulter. Annars egna projekt och underställda | | allt |
-| Tidrapporter (timmar) | egen | + egna konsulter (BM), projekt och underställda | egen | allt |
-| Priser, kostnader, TB | | | | ✔ |
-| Egen provision | | | ✔ | ✔ |
-| Användare, kunder, projekt, provisionsregler | | | | ✔ |
-| Fakturering och upplupet | | | | ✔ |
+| | Användare | BM / projektledare / chef | Mottagare av provision | Ekonomi | Administratör |
+|---|---|---|---|---|---|
+| Egen tid, utlägg, körjournal | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Attestera tid, utlägg, körning | | BM: sina konsulter. Annars projektledare och chef | | | allt |
+| Tidrapporter (timmar) | egen | + sina konsulter, projekt och underställda | egen | allt | allt |
+| Priser, kostnader, intäkter i tidrapporter | | | | ✔ | ✔ |
+| Fakturering, avskrivning, upplupet | | | | ✔ | ✔ |
+| Läsa kund- och projektlistor | | | | ✔ | ✔ |
+| Kvitton | egna | de man attesterar | egna | alla | alla |
+| TB per konsult och provisionsrapport | | | egen provision | | ✔ |
+| Statistik och prognos | | sina konsulter | egen | | alla |
+| Användare, kunder, projekt, avtal, provisionsregler, inställningar | | | | | ✔ |
 
-Projektledare ser alltså timmar men inte pengar. Det är ett medvetet val för första versionen.
+Ekonomi ser alltså kundens pengar men inte provisioner eller löner. Projektledare och BM ser timmar men inte pengar.
 
 ## Säkerhet
 
@@ -167,7 +172,7 @@ Projektledare ser alltså timmar men inte pengar. Det är ett medvetet val för 
 
 - Databasen är en SQLite-fil i WAL-läge. Säkerhetskopiera med `sqlite3 data/x-time.sqlite ".backup 'backup.sqlite'"` och kopiera `data/receipts/` med.
 - Inloggningsspärren ligger i minnet och nollställs vid omstart. Kör en enda instans.
-- Tester: `npm test` (114 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
+- Tester: `npm test` (124 tester som täcker behörigheter, tidregler, attest, provisionsregler, fakturering och upplupet).
 
 ## Begränsningar och antaganden
 

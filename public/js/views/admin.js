@@ -57,7 +57,7 @@ async function usersTab(root) {
         rows: users,
         rowClass: (u) => (u.active ? '' : 'inactive'),
         columns: [
-          { label: 'Namn', render: (u) => [u.name, u.active ? null : h('span', { class: 'chip', title: 'Inaktiv' }, ' inaktiv'), u.role === 'admin' ? h('span', { class: 'chip accent' }, ' admin') : null] },
+          { label: 'Namn', render: (u) => [u.name, u.active ? null : h('span', { class: 'chip', title: 'Inaktiv' }, ' inaktiv'), u.role === 'admin' ? h('span', { class: 'chip accent' }, ' admin') : null, u.finance && u.role !== 'admin' ? h('span', { class: 'chip accent', title: 'Ekonomiadministratör' }, ' ekonomi') : null] },
           { label: 'E-post', render: (u) => u.email },
           { label: 'Kategori', render: (u) => u.category_name || '' },
           { label: 'BM', render: (u) => u.bm_name || '' },
@@ -96,17 +96,18 @@ async function usersTab(root) {
       { name: 'email', label: 'E-post', type: 'email', required: true },
       { name: 'role', label: 'Roll', type: 'select', options: [{ value: 'user', label: 'Användare' }, { value: 'admin', label: 'Administratör' }] },
       { name: 'category_id', label: 'Kategori', type: 'select', options: optionList(categories, { blank: '(ingen)' }) },
-      { name: 'bm_id', label: 'BM (attesterar all tid)', type: 'select', options: optionList(users.filter((u) => (u.active || u.id === existing?.bm_id) && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }), hint: 'Har användaren en BM är det bara BM som attesterar tiden. Utan BM attesterar projektledaren.' },
+      { name: 'bm_id', label: 'BM / konsultchef (attesterar allt som rapporteras)', type: 'select', options: optionList(users.filter((u) => (u.active || u.id === existing?.bm_id) && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }), hint: 'Har användaren en BM är det bara BM som attesterar tid, utlägg och körningar. Utan BM attesterar projektledaren.' },
       { name: 'manager_id', label: 'Chef (attesterar när BM och projektledare saknas)', type: 'select', options: optionList(users.filter((u) => u.active && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }) },
       { name: 'weekly_hours', label: 'Arbetstid per vecka (tim)', type: 'number', step: '0.5', min: '0', max: '80' },
       { name: 'cost_rate', label: 'Intern timkostnad (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används för TB. Syns bara för administratörer.' },
       { name: 'default_bill_rate', label: 'Standard timpris (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används när varken projekt, aktivitet eller medlem har eget pris.' },
+      { name: 'finance', label: 'Ekonomiadministratör (fakturering och ekonomirapporter)', type: 'checkbox', full: true },
       ...(existing ? [{ name: 'active', label: 'Aktiv', type: 'checkbox' }] : [{ name: 'password', label: 'Tillfälligt lösenord', type: 'password', required: true, hint: 'Minst 10 tecken. Användaren måste byta vid första inloggning.', full: true }]),
     ];
     editDialog({
       title: existing ? `Ändra ${existing.name}` : 'Ny användare',
       fields,
-      values: existing ? { ...existing, active: !!existing.active } : { role: 'user', weekly_hours: 40, cost_rate: 0, default_bill_rate: 0 },
+      values: existing ? { ...existing, active: !!existing.active, finance: !!existing.finance } : { role: 'user', weekly_hours: 40, cost_rate: 0, default_bill_rate: 0, finance: false },
       onSave: async (v) => {
         const body = { ...v, cost_rate: v.cost_rate ?? 0, default_bill_rate: v.default_bill_rate ?? 0, weekly_hours: v.weekly_hours ?? 40 };
         if (existing) await patch(`/api/users/${existing.id}`, body);

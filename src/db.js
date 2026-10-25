@@ -285,6 +285,9 @@ export const MIGRATIONS = [
    );
    CREATE INDEX assignments_user ON assignments(user_id);
    CREATE INDEX assignments_customer ON assignments(customer_id);`,
+
+  // 5: ekonomiadministratör. Hanterar fakturering och ekonomirapporter utan att vara administratör.
+  `ALTER TABLE users ADD COLUMN finance INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export function openDb(file) {
