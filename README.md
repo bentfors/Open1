@@ -154,6 +154,12 @@ Jag har inte kunnat läsa Millnets egen dokumentation, så jämförelsen med Flo
 - **Administratör kan inte rapportera tid åt andra i gränssnittet.** API:t stödjer det.
 - Ingen revisionslogg över ändringar utöver vem som godkände och när.
 
+## Utseende
+
+Gränssnittet är mörkt och följer xamera.se: svart bakgrund (`#030303`), kortytor utan ram (`#0a0a0a`), ljus kaki för rubriker (`#bdbd7b`), starkare kaki för länkar och knapptext (`#b2aa52`), versala knappar med grå ram och en mörkbrun primärknapp med olivram. Färgerna är uppmätta i skärmbilder av sidan, inte hämtade ur deras CSS. Alla färger och mått ligger som variabler överst i `public/css/app.css`.
+
+Typsnittet är Space Grotesk, som jag bedömt ser ut som det Xamera använder. Det ligger lokalt i `public/fonts/` (SIL Open Font License, se `OFL.txt`), så inga anrop går till Google. Det finns inget ljust läge.
+
 ## Struktur
 
 ```

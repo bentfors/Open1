@@ -5,7 +5,7 @@ function authCard(title, children) {
   return h(
     'div',
     { class: 'auth-wrap' },
-    h('div', { class: 'card auth-card' }, h('div', { class: 'brand' }, h('img', { class: 'brand-mark', src: '/favicon.svg', alt: '' }), 'x-time'), h('h1', {}, title), children),
+    h('div', { class: 'card auth-card' }, h('div', { class: 'brand' }, 'x-time'), h('h1', {}, title), children),
   );
 }
 

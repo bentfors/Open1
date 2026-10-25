@@ -34,6 +34,7 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
   '.json': 'application/json; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
 };
@@ -153,7 +154,9 @@ export function createApp({ db, dataDir = config.dataDir }) {
 
     const etag = `"${stat.size}-${Math.floor(stat.mtimeMs)}"`;
     etags.set(file, etag);
-    const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache', ETag: etag, ...securityHeaders() };
+    // Typsnitt ändras aldrig utan nytt filnamn, så de får cachas. Allt annat valideras med ETag.
+    const cache = type === 'font/woff2' ? 'public, max-age=604800' : 'no-cache';
+    const headers = { 'Content-Type': type, 'Cache-Control': cache, ETag: etag, ...securityHeaders() };
     if (req.headers['if-none-match'] === etag) {
       res.writeHead(304, headers);
       return res.end();

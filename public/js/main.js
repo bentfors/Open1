@@ -57,7 +57,7 @@ function renderShell() {
     h(
       'div',
       { class: 'topbar-inner' },
-      h('a', { class: 'brand', href: '#/tid' }, h('img', { class: 'brand-mark', src: '/favicon.svg', alt: '' }), 'x-time'),
+      h('a', { class: 'brand', href: '#/tid', 'aria-label': 'x-time, startsidan' }, 'x-time'),
       nav,
       h(
         'div',
