@@ -6,7 +6,8 @@ import { isAdmin } from '../domain.js';
 import { audit, changesFor } from '../audit.js';
 
 const USER_COLUMNS = `u.id, u.email, u.name, u.role, u.finance, u.category_id, c.name AS category_name, u.manager_id,
-  m.name AS manager_name, u.bm_id, bm.name AS bm_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.pay_type, u.active, u.must_change_password`;
+  m.name AS manager_name, u.bm_id, bm.name AS bm_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.pay_type,
+  u.cost_center_id, cc.code AS cost_center_code, cc.name AS cost_center_name, u.active, u.must_change_password`;
 
 const USER_SCHEMA = {
   email: f.email({ required: true, label: 'E-post' }),
@@ -20,6 +21,7 @@ const USER_SCHEMA = {
   default_bill_rate: f.num({ min: 0, max: 100000, label: 'Standardpris' }),
   weekly_hours: f.num({ min: 0, max: 80, label: 'Arbetstid per vecka' }),
   pay_type: f.oneOf(['monthly', 'hourly', 'subcontractor'], { label: 'Ersättningsform' }),
+  cost_center_id: f.int({ nullable: true, min: 1, label: 'Kostnadsställe' }),
   active: f.bool({ label: 'Aktiv' }),
 };
 
@@ -37,6 +39,9 @@ function assertRefs(db, data) {
   }
   if (data.bm_id != null && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1').get(data.bm_id)) {
     throw bad('BM finns inte eller är inaktiv.');
+  }
+  if (data.cost_center_id != null && !db.prepare('SELECT 1 FROM cost_centers WHERE id = ?').get(data.cost_center_id)) {
+    throw bad('Kostnadsstället finns inte.');
   }
 }
 
@@ -81,6 +86,7 @@ export function registerUsers({ db, router }) {
          LEFT JOIN categories c ON c.id = u.category_id
          LEFT JOIN users m ON m.id = u.manager_id
          LEFT JOIN users bm ON bm.id = u.bm_id
+         LEFT JOIN cost_centers cc ON cc.id = u.cost_center_id
          ORDER BY u.active DESC, u.name`,
       )
       .all(),

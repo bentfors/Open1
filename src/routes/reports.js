@@ -13,6 +13,7 @@ const GROUPS = {
   activity: { key: 'a.id', label: "p.code || ' › ' || a.name", title: 'Aktivitet' },
   user: { key: 'u.id', label: 'u.name', title: 'Användare' },
   category: { key: "COALESCE(uc.id, 0)", label: "COALESCE(uc.name, '(ingen kategori)')", title: 'Kategori' },
+  kst: { key: 'COALESCE(u.cost_center_id, 0)', label: "COALESCE(cc.code || ' ' || cc.name, '(inget kostnadsställe)')", title: 'Kostnadsställe' },
   month: { key: "substr(te.work_date, 1, 7)", label: "substr(te.work_date, 1, 7)", title: 'Månad' },
   day: { key: 'te.work_date', label: 'te.work_date', title: 'Dag' },
   absence: { key: 'at.id', label: 'at.name', title: 'Frånvarotyp' },
@@ -78,6 +79,7 @@ export function registerReports({ db, router }) {
          FROM time_entries te
          JOIN users u ON u.id = te.user_id
          LEFT JOIN categories uc ON uc.id = u.category_id
+         LEFT JOIN cost_centers cc ON cc.id = u.cost_center_id
          LEFT JOIN activities a ON a.id = te.activity_id
          LEFT JOIN projects p ON p.id = a.project_id
          LEFT JOIN customers c ON c.id = p.customer_id

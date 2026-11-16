@@ -44,6 +44,8 @@ describe('månadsfakturering', () => {
     await admin.patch(`/api/customers/${w.customer}`, { ext_no: '1001' });
     await admin.patch(`/api/activities/${w.p1Activity}`, { article_no: 'KONS' });
     await admin.patch('/api/settings', { article_no_expense: 'UTL', article_no_mileage: 'BIL' });
+    const lkp = (await admin.post('/api/cost-centers', { code: 'LKP', name: 'Linköping' })).json.id;
+    await admin.patch(`/api/users/${anna.id}`, { cost_center_id: lkp });
   });
   after(async () => {
     setTodayForTests(null);
@@ -101,11 +103,11 @@ describe('månadsfakturering', () => {
   test('underlaget har kundnummer, artikelnummer och projektnummer per rad', async () => {
     const acme = (await basic.client.get('/api/invoices')).json.find((i) => i.customer_id === w.customer);
     const csv = (await basic.client.get(`/api/invoices/${acme.id}?format=csv`)).text.trimEnd().split('\r\n');
-    assert.equal(csv[0], '﻿Kundnummer;Typ;Artikelnummer;Projektnummer;Projekt;Beskrivning;Antal;Enhet;À-pris;Belopp');
+    assert.equal(csv[0], '﻿Kundnummer;Typ;Artikelnummer;Projektnummer;Kostnadsställe;Projekt;Beskrivning;Antal;Enhet;À-pris;Belopp');
     assert.deepEqual(csv.slice(1), [
-      '1001;Tid;KONS;ACME-1;ACME-1 Plattform;Arbete – Anna Konsult;12;tim;1200;14400',
-      '1001;Utlägg;UTL;ACME-1;ACME-1 Plattform;2026-05-12 Hotell (Anna Konsult);1;st;500;500',
-      ';;;;;Summa;;;;14900',
+      '1001;Tid;KONS;ACME-1;LKP;ACME-1 Plattform;Arbete – Anna Konsult;12;tim;1200;14400',
+      '1001;Utlägg;UTL;ACME-1;LKP;ACME-1 Plattform;2026-05-12 Hotell (Anna Konsult);1;st;500;500',
+      ';;;;;;Summa;;;;14900',
     ]);
     const beta_ = (await basic.client.get('/api/invoices')).json.find((i) => i.customer_id === beta);
     const lines = (await basic.client.get(`/api/invoices/${beta_.id}`)).json.lines;

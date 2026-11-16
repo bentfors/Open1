@@ -329,6 +329,23 @@ export const MIGRATIONS = [
   // 9: ekonomisystem. Kundnummer och artikelnummer som i bokföringen (till exempel Fortnox), så att underlagen kan föras över.
   `ALTER TABLE customers ADD COLUMN ext_no TEXT NOT NULL DEFAULT '';
    ALTER TABLE activities ADD COLUMN article_no TEXT NOT NULL DEFAULT '';`,
+
+  // 10: kostnadsställen och budget. Personer hör till ett kostnadsställe (KST); budget sätts per KST och månad.
+  // kst = 0 i budgeten betyder personer utan kostnadsställe.
+  `CREATE TABLE cost_centers (
+     id     INTEGER PRIMARY KEY,
+     code   TEXT NOT NULL UNIQUE COLLATE NOCASE,
+     name   TEXT NOT NULL,
+     active INTEGER NOT NULL DEFAULT 1
+   );
+   ALTER TABLE users ADD COLUMN cost_center_id INTEGER REFERENCES cost_centers(id) ON DELETE SET NULL;
+   CREATE TABLE budgets (
+     kst     INTEGER NOT NULL DEFAULT 0,
+     month   TEXT NOT NULL,
+     revenue REAL NOT NULL DEFAULT 0,
+     margin  REAL NOT NULL DEFAULT 0,
+     PRIMARY KEY (kst, month)
+   );`,
 ];
 
 export function openDb(file) {

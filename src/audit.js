@@ -22,6 +22,8 @@ export const ENTITY_LABELS = {
   time: 'Tid',
   expense: 'Utlägg',
   mileage: 'Körning',
+  cost_center: 'Kostnadsställe',
+  budget: 'Budget',
 };
 
 export const ACTION_LABELS = {
@@ -99,6 +101,7 @@ const FIELD_LABELS = {
   article_no: 'Artikelnummer',
   article_no_expense: 'Artikelnummer, utlägg',
   article_no_mileage: 'Artikelnummer, körning',
+  cost_center_id: 'Kostnadsställe',
   minutes: 'Minuter',
   note: 'Anteckning',
   date: 'Datum',
@@ -118,6 +121,7 @@ const FIELD_LABELS_BY_ENTITY = {
   assignment: { user_id: 'Konsult' },
   expense: { billable: 'Vidarefakturera' },
   mileage: { billable: 'Vidarefakturera' },
+  cost_center: { code: 'Kod' },
 };
 
 const VALUE_LABELS = {
@@ -157,6 +161,7 @@ function show(db, key, value) {
   if (key === 'category_id') return lookup('SELECT name AS v FROM categories WHERE id = ?');
   if (key === 'customer_id') return lookup('SELECT name AS v FROM customers WHERE id = ?');
   if (key === 'project_id') return lookup("SELECT code || ' ' || name AS v FROM projects WHERE id = ?");
+  if (key === 'cost_center_id') return lookup("SELECT code || ' ' || name AS v FROM cost_centers WHERE id = ?");
   if (key === 'finance') return FINANCE_LEVELS[value] ?? String(value);
   if (typeof value === 'string' && Object.hasOwn(VALUE_LABELS, value)) return VALUE_LABELS[value];
   const s = String(value);

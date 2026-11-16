@@ -8,10 +8,12 @@ import { normMinutes } from './holidays.js';
  */
 
 const PEOPLE_SQL = `
-  SELECT u.id, u.name, u.weekly_hours, u.category_id, c.name AS category, u.bm_id, bm.name AS bm_name, u.manager_id
+  SELECT u.id, u.name, u.weekly_hours, u.category_id, c.name AS category, u.bm_id, bm.name AS bm_name, u.manager_id,
+         u.cost_center_id, cc.code || ' ' || cc.name AS kst_name
   FROM users u
   LEFT JOIN categories c ON c.id = u.category_id
   LEFT JOIN users bm ON bm.id = u.bm_id
+  LEFT JOIN cost_centers cc ON cc.id = u.cost_center_id
   WHERE u.active = 1`;
 
 export function scopePeople(db, user) {
@@ -92,6 +94,7 @@ export const UTILIZATION_GROUPS = {
   person: 'Person',
   bm: 'BM',
   category: 'Kategori',
+  kst: 'Kostnadsställe',
   month: 'Månad',
 };
 
@@ -153,6 +156,7 @@ export function utilization(db, user, { from, to, groupBy = 'person', approvedOn
     person: (b) => [b.person.id, b.person.name, { category: b.person.category, bm_name: b.person.bm_name }],
     bm: (b) => [b.person.bm_id ?? 0, b.person.bm_name ?? '(ingen BM)', {}],
     category: (b) => [b.person.category_id ?? 0, b.person.category ?? '(ingen kategori)', {}],
+    kst: (b) => [b.person.cost_center_id ?? 0, b.person.kst_name ?? '(inget kostnadsställe)', {}],
     month: (b) => [b.window.start.slice(0, 7), b.window.start.slice(0, 7), {}],
   }[groupBy];
 

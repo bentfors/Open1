@@ -209,9 +209,10 @@ export function registerBilling({ db, router }) {
     const time = db
       .prepare(
         `SELECT p.code AS project_code, p.name AS project_name, a.name AS activity_name, a.article_no, u.name AS user_name,
-                te.bill_rate AS rate, SUM(te.minutes) AS minutes
+                cc.code AS cost_center, te.bill_rate AS rate, SUM(te.minutes) AS minutes
          FROM time_entries te
          JOIN users u ON u.id = te.user_id
+         LEFT JOIN cost_centers cc ON cc.id = u.cost_center_id
          JOIN activities a ON a.id = te.activity_id
          JOIN projects p ON p.id = a.project_id
          WHERE te.invoice_id = ?
@@ -223,6 +224,7 @@ export function registerBilling({ db, router }) {
         kind: 'Tid',
         article_no: r.article_no,
         project_code: r.project_code,
+        cost_center: r.cost_center,
         project: `${r.project_code} ${r.project_name}`,
         description: `${r.activity_name} – ${r.user_name}`,
         quantity: round2(r.minutes / 60),
@@ -232,8 +234,10 @@ export function registerBilling({ db, router }) {
       }));
     const expenses = db
       .prepare(
-        `SELECT p.code AS project_code, p.name AS project_name, e.expense_date AS date, e.description, u.name AS user_name, e.amount
+        `SELECT p.code AS project_code, p.name AS project_name, e.expense_date AS date, e.description, u.name AS user_name, e.amount,
+                cc.code AS cost_center
          FROM expenses e JOIN users u ON u.id = e.user_id JOIN projects p ON p.id = e.project_id
+         LEFT JOIN cost_centers cc ON cc.id = u.cost_center_id
          WHERE e.invoice_id = ? ORDER BY p.code, e.expense_date`,
       )
       .all(invoiceId)
@@ -241,6 +245,7 @@ export function registerBilling({ db, router }) {
         kind: 'Utlägg',
         article_no: settings.article_no_expense,
         project_code: r.project_code,
+        cost_center: r.cost_center,
         project: `${r.project_code} ${r.project_name}`,
         description: `${r.date} ${r.description} (${r.user_name})`,
         quantity: 1,
@@ -250,8 +255,10 @@ export function registerBilling({ db, router }) {
       }));
     const mileage = db
       .prepare(
-        `SELECT p.code AS project_code, p.name AS project_name, u.name AS user_name, m.rate_per_km AS rate, SUM(m.km) AS km
+        `SELECT p.code AS project_code, p.name AS project_name, u.name AS user_name, m.rate_per_km AS rate, SUM(m.km) AS km,
+                cc.code AS cost_center
          FROM mileage m JOIN users u ON u.id = m.user_id JOIN projects p ON p.id = m.project_id
+         LEFT JOIN cost_centers cc ON cc.id = u.cost_center_id
          WHERE m.invoice_id = ? GROUP BY p.id, u.id, m.rate_per_km ORDER BY p.code, u.name`,
       )
       .all(invoiceId)
@@ -259,6 +266,7 @@ export function registerBilling({ db, router }) {
         kind: 'Körning',
         article_no: settings.article_no_mileage,
         project_code: r.project_code,
+        cost_center: r.cost_center,
         project: `${r.project_code} ${r.project_name}`,
         description: `Bilersättning – ${r.user_name}`,
         quantity: round2(r.km),
@@ -433,12 +441,13 @@ export function registerBilling({ db, router }) {
     const inv = loadInvoice(Number(params.id));
     const { lines, total } = buildLines(inv.id);
     if (query.format === 'csv') {
-      // Kundnummer, artikelnummer och projektnummer per rad, i den form fakturarader har i ekonomisystem som Fortnox.
+      // Kundnummer, artikelnummer, projekt och kostnadsställe per rad, i den form fakturarader har i ekonomisystem som Fortnox.
       const columns = [
         { key: 'customer_no', label: 'Kundnummer' },
         { key: 'kind', label: 'Typ' },
         { key: 'article_no', label: 'Artikelnummer' },
         { key: 'project_code', label: 'Projektnummer' },
+        { key: 'cost_center', label: 'Kostnadsställe' },
         { key: 'project', label: 'Projekt' },
         { key: 'description', label: 'Beskrivning' },
         { key: 'quantity', label: 'Antal' },

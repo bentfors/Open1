@@ -19,7 +19,7 @@ function loadPeople(db, extraIds) {
   const marks = ids.map(() => '?').join(',');
   const users = db
     .prepare(
-      `SELECT id, name, weekly_hours, cost_rate, category_id FROM users
+      `SELECT id, name, weekly_hours, cost_rate, category_id, cost_center_id FROM users
        WHERE active = 1 AND (id IN (SELECT user_id FROM assignments)${ids.length ? ` OR id IN (${marks})` : ''})`,
     )
     .all(...ids);
@@ -46,20 +46,20 @@ function simulatePerson(person, { from, to, utilization, worked, capMinutes, car
       const revenue = active.reduce((s, a) => s + (a.hours_per_week / 5) * a.hourly_rate, 0) * utilization;
       const cost = (worked ? daily : assigned) * person.cost_rate;
       counter = 0; // i uppdrag: bänkräknaren börjar om
-      days.set(d, { billH: assigned, projH: daily, tb: revenue - cost, actual: revenue - cost, cappedH: 0 });
+      days.set(d, { billH: assigned, projH: daily, tb: revenue - cost, actual: revenue - cost, cappedH: 0, revenue, cost });
     } else {
       const minutes = daily * 60;
       const cost = worked ? daily * person.cost_rate : 0;
       const counted = capMinutes === null ? minutes : Math.max(0, Math.min(minutes, capMinutes - counter));
       counter += minutes;
-      days.set(d, { billH: 0, projH: daily, tb: minutes ? -cost * (counted / minutes) : 0, actual: -cost, cappedH: (minutes - counted) / 60 });
+      days.set(d, { billH: 0, projH: daily, tb: minutes ? -cost * (counted / minutes) : 0, actual: -cost, cappedH: (minutes - counted) / 60, revenue: 0, cost });
     }
   }
   return days;
 }
 
 function sumWindow(days, start, end) {
-  const out = { tb: 0, actual: 0, minutes: 0, billMin: 0, cappedMin: 0 };
+  const out = { tb: 0, actual: 0, minutes: 0, billMin: 0, cappedMin: 0, revenue: 0, cost: 0 };
   if (!days) return out;
   for (let d = start; d <= end; d = addDays(d, 1)) {
     const x = days.get(d);
@@ -69,6 +69,8 @@ function sumWindow(days, start, end) {
     out.minutes += x.projH * 60;
     out.billMin += x.billH * 60;
     out.cappedMin += x.cappedH * 60;
+    out.revenue += x.revenue;
+    out.cost += x.cost;
   }
   return out;
 }
@@ -141,6 +143,33 @@ export function forecast(db, { earnerId, months = 12, virtual = [], excludeAssig
 
   const rows = computeCommissions(db, { from: t, to: horizonEnd, earnerId, provider });
   return { rows, sim, people, horizonEnd };
+}
+
+/**
+ * Prognos för hela bolaget: intäkt och verklig kostnad per person och dag enligt avtalsregistret, utan bänkgräns
+ * (gränsen gäller provisionen, inte vad det kostar). Med är aktiva personer som har en BM eller ett uppdrag.
+ */
+export function companyForecast(db, { from, to }) {
+  const settings = getSettings(db);
+  const ids = db.prepare('SELECT id FROM users WHERE active = 1 AND bm_id IS NOT NULL').all().map((r) => r.id);
+  const people = loadPeople(db, ids);
+  const sim = new Map();
+  for (const person of people) {
+    sim.set(
+      person.id,
+      simulatePerson(person, {
+        from,
+        to,
+        utilization: settings.forecast_utilization / 100,
+        worked: settings.tb_cost_basis === 'billable' ? 0 : 1,
+        capMinutes: null,
+        carryMinutes: 0,
+        excluded: new Set(),
+        holidays: holidayOptions(settings),
+      }),
+    );
+  }
+  return { people, sim };
 }
 
 // Provision per månad där perioden slutar, alltså när den tjänats in.

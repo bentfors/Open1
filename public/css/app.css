@@ -303,6 +303,8 @@ table.data th.sortable { padding: 0; }
 .log-desc .chg-field { color: var(--dim); }
 .log-desc summary { cursor: pointer; color: var(--accent); font-size: 0.86rem; }
 .log-foot { padding: 0.7rem 0.85rem; border-top: 1px solid var(--border); }
+.budget-grid input { width: 10rem; text-align: right; }
+.budget-grid td { padding-top: 0.35rem; padding-bottom: 0.35rem; }
 .log-foot .row { align-items: center; }
 .log-foot select { width: auto; padding: 0.3rem 0.6rem; }
 

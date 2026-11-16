@@ -1,4 +1,4 @@
-import { get, post, del, patch, qs } from '../api.js';
+import { get, post, put, del, patch, qs } from '../api.js';
 import { state, isFinanceSuper } from '../state.js';
 import { h, add, setKids, fmtMoney, fmtNum, fmtDate, fmtMonth, toast, editDialog, openDialog, confirmDialog, promptDialog, dataTable, localToday } from '../dom.js';
 
@@ -13,6 +13,7 @@ function subnav(active) {
     h('a', { href: '#/fakturering/underlag', 'aria-current': active === 'underlag' ? 'page' : null }, 'Skapade underlag'),
     isFinanceSuper() ? h('a', { href: '#/fakturering/lon', 'aria-current': active === 'lon' ? 'page' : null }, 'Löneunderlag') : null,
     h('a', { href: '#/fakturering/underkonsulter', 'aria-current': active === 'underkonsulter' ? 'page' : null }, 'Underkonsulter'),
+    isFinanceSuper() ? h('a', { href: '#/fakturering/budget', 'aria-current': active === 'budget' ? 'page' : null }, 'Budget') : null,
     h('a', { href: '#/fakturering/lasning', 'aria-current': active === 'lasning' ? 'page' : null }, 'Periodlåsning'),
   );
 }
@@ -139,6 +140,145 @@ async function monthlyView(root) {
     created,
     result,
     h('p', { class: 'muted small' }, 'Ett underlag per kund med allt godkänt och debiterbart på löpande räkning till och med månadens slut. Det som väntar på attest eller inte är inskickat ligger kvar till nästa gång. Fastprisprojekt faktureras separat. Vill du välja rad för rad, öppna kunden.'),
+  );
+  await load();
+}
+
+// ── Budget ─────────────────────────────────────────────────────────────
+const neg = (n) => h('span', { class: n < 0 ? 'neg' : '' }, fmtMoney(n));
+
+async function budgetView(root) {
+  const thisYear = new Date().getFullYear();
+  let year = thisYear;
+  let kst = '';
+  const costCenters = await get('/api/cost-centers');
+  const result = h('div', { class: 'stack' });
+  const editBtn = h('button', { class: 'btn', type: 'button', onclick: () => edit() }, 'Ändra budget');
+  let data = null;
+
+  async function load() {
+    try {
+      data = await get(`/api/budget${qs({ year, kst })}`);
+      editBtn.disabled = kst === '';
+      editBtn.title = kst === '' ? 'Välj ett kostnadsställe för att ändra dess budget.' : '';
+      draw();
+    } catch (err) {
+      setKids(result, h('div', { class: 'alert error' }, err.message));
+    }
+  }
+
+  function draw() {
+    const t = data.totals;
+    const outcomeCell = (r, key) => {
+      const main = r.state === 'past' ? fmtMoney(r.outcome[key]) : h('em', { title: 'Prognos enligt avtalsregistret' }, fmtMoney(r.outcome[key]));
+      const sofar = r.state === 'current' ? h('div', { class: 'small muted' }, `utfall hittills ${fmtMoney(r.actual[key])}`) : null;
+      return [main, sofar];
+    };
+    setKids(
+      result,
+      h(
+        'div',
+        { class: 'kpis' },
+        kpi('Intäkt, budget', fmtMoney(t.budget.revenue), h('div', { class: 'small muted' }, `helår ${year}`)),
+        kpi('Intäkt, utfall + prognos', fmtMoney(t.outcome.revenue), h('div', { class: 'small muted' }, 'avvikelse ', neg(t.deviation.revenue))),
+        kpi('TB, budget', fmtMoney(t.budget.margin)),
+        kpi('TB, utfall + prognos', fmtMoney(t.outcome.margin), h('div', { class: 'small muted' }, 'avvikelse ', neg(t.deviation.margin))),
+      ),
+      h(
+        'div',
+        { class: 'card flush' },
+        dataTable({
+          rows: data.months,
+          rowClass: (r) => (r.state === 'current' ? 'picked' : ''),
+          columns: [
+            { label: 'Månad', render: (r) => [fmtMonth(r.month), r.state === 'current' ? h('span', { class: 'chip accent' }, ' pågår') : null] },
+            { label: 'Intäkt budget', num: true, render: (r) => (r.budget.revenue ? fmtMoney(r.budget.revenue) : h('span', { class: 'muted' }, '–')) },
+            { label: 'Intäkt utfall / prognos', num: true, render: (r) => outcomeCell(r, 'revenue') },
+            { label: 'Avvikelse', num: true, render: (r) => neg(r.deviation.revenue) },
+            { label: 'TB budget', num: true, render: (r) => (r.budget.margin ? fmtMoney(r.budget.margin) : h('span', { class: 'muted' }, '–')) },
+            { label: 'TB utfall / prognos', num: true, render: (r) => outcomeCell(r, 'margin') },
+            { label: 'Avvikelse', num: true, render: (r) => neg(r.deviation.margin) },
+          ],
+          footer: (c, i) => ['Helår', fmtMoney(t.budget.revenue), fmtMoney(t.outcome.revenue), neg(t.deviation.revenue), fmtMoney(t.budget.margin), fmtMoney(t.outcome.margin), neg(t.deviation.margin)][i],
+        }),
+      ),
+    );
+  }
+
+  function edit() {
+    const name = kst === '0' ? 'utan kostnadsställe' : costCenters.find((c) => String(c.id) === kst)?.name;
+    const inputs = data.months.map((r) => ({
+      month: r.month,
+      revenue: h('input', { type: 'number', step: '1000', min: '0', value: r.budget.revenue, 'aria-label': `Intäkt ${r.month}` }),
+      margin: h('input', { type: 'number', step: '1000', value: r.budget.margin, 'aria-label': `TB ${r.month}` }),
+    }));
+    const yearRevenue = h('input', { type: 'number', step: '1000', min: '0', placeholder: 'Intäkt helår', 'aria-label': 'Intäkt helår' });
+    const yearMargin = h('input', { type: 'number', step: '1000', placeholder: 'TB helår', 'aria-label': 'TB helår' });
+    const spread = h('button', {
+      class: 'btn sm',
+      type: 'button',
+      onclick: () => {
+        // Jämnt per månad, med öresavrundning lagd på december så att summan blir exakt.
+        for (const [input, key] of [[yearRevenue, 'revenue'], [yearMargin, 'margin']]) {
+          if (input.value === '') continue;
+          const total = Number(input.value);
+          const each = Math.round((total / 12) * 100) / 100;
+          inputs.forEach((x, i) => (x[key].value = i < 11 ? each : Math.round((total - each * 11) * 100) / 100));
+        }
+      },
+    }, 'Fördela jämnt');
+    const error = h('div', { class: 'alert error hidden' });
+    const save = h('button', { class: 'btn primary', type: 'button' }, 'Spara budget');
+    const { close } = openDialog({
+      title: `Budget ${year} · ${name}`,
+      wide: true,
+      content: [
+        error,
+        h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Intäkt helår'), yearRevenue), h('div', { class: 'field' }, h('label', {}, 'TB helår'), yearMargin), spread),
+        h(
+          'div',
+          { class: 'table-wrap' },
+          h(
+            'table',
+            { class: 'data budget-grid' },
+            h('thead', {}, h('tr', {}, h('th', {}, 'Månad'), h('th', { class: 'num' }, 'Intäkt'), h('th', { class: 'num' }, 'TB'))),
+            h('tbody', {}, inputs.map((x) => h('tr', {}, h('td', {}, fmtMonth(x.month)), h('td', { class: 'num' }, x.revenue), h('td', { class: 'num' }, x.margin)))),
+          ),
+        ),
+      ],
+      actions: [h('button', { class: 'btn', type: 'button', onclick: () => close() }, 'Avbryt'), save],
+    });
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try {
+        data = await put('/api/budget', { year, kst: Number(kst), months: inputs.map((x) => ({ month: x.month, revenue: Number(x.revenue.value || 0), margin: Number(x.margin.value || 0) })) });
+        toast('Budgeten är sparad.', 'ok');
+        close();
+        draw();
+      } catch (err) {
+        error.textContent = err.message;
+        error.classList.remove('hidden');
+        save.disabled = false;
+      }
+    });
+  }
+
+  const yearSel = h('select', { id: 'b-year', onchange: (e) => { year = Number(e.target.value); load(); } }, [thisYear - 1, thisYear, thisYear + 1].map((y) => h('option', { value: y, selected: y === year }, String(y))));
+  const kstSel = h(
+    'select',
+    { id: 'b-kst', onchange: (e) => { kst = e.target.value; load(); } },
+    h('option', { value: '' }, 'Alla kostnadsställen'),
+    costCenters.map((c) => h('option', { value: String(c.id) }, `${c.code} ${c.name}${c.active ? '' : ' (inaktivt)'}`)),
+    h('option', { value: '0' }, 'Utan kostnadsställe'),
+  );
+  add(
+    root,
+    h('h1', {}, 'Ekonomi'),
+    subnav('budget'),
+    h('div', { class: 'card' }, h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', { for: 'b-year' }, 'År'), yearSel), h('div', { class: 'field' }, h('label', { for: 'b-kst' }, 'Kostnadsställe'), kstSel), editBtn)),
+    costCenters.length ? null : h('div', { class: 'alert' }, 'Det finns inga kostnadsställen ännu. Lägg till dem under Admin → Kostnadsställen, eller budgetera allt som "Utan kostnadsställe".'),
+    result,
+    h('p', { class: 'muted small' }, 'Utfall är attesterad tid: intäkt = debiterbar tid × pris, TB = intäkt − kostnad enligt inställningen för TB. Prognosen (kursiv) bygger på avtalsregistret med beläggning och helgdagar, från innevarande månad. Tiden räknas på personens nuvarande kostnadsställe.'),
   );
   await load();
 }
@@ -704,6 +844,7 @@ export async function renderBilling(root, params) {
   if ((view === 'projekt' || view === 'kund') && Number.isInteger(Number(id))) return workbench(root, view, Number(id));
   if (view === 'underlag') return invoiceHistory(root);
   if (view === 'manad') return monthlyView(root);
+  if (view === 'budget' && isFinanceSuper()) return budgetView(root);
   if (view === 'lon' && isFinanceSuper()) return payrollView(root);
   if (view === 'underkonsulter') return subcontractorView(root);
   return overview(root);

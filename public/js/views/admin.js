@@ -9,6 +9,7 @@ const TABS = [
   ['projekt', 'Projekt'],
   ['avtal', 'Avtal'],
   ['kategorier', 'Kategorier'],
+  ['kst', 'Kostnadsställen'],
   ['provision', 'Provision'],
   ['franvaro', 'Frånvaro'],
   ['installningar', 'Inställningar'],
@@ -47,8 +48,8 @@ async function guarded(fn) {
 async function usersTab(root) {
   let box;
   const refs = async () => {
-    const [categories, users] = await Promise.all([get('/api/categories'), get('/api/users')]);
-    return { categories, users };
+    const [categories, users, costCenters] = await Promise.all([get('/api/categories'), get('/api/users'), get('/api/cost-centers')]);
+    return { categories, users, costCenters };
   };
 
   async function reload() {
@@ -67,7 +68,7 @@ async function usersTab(root) {
         columns: [
           { label: 'Namn', render: (u) => [u.name, u.active ? null : h('span', { class: 'chip', title: 'Inaktiv' }, ' inaktiv'), u.role === 'admin' ? h('span', { class: 'chip accent' }, ' admin') : null, u.finance && u.role !== 'admin' ? h('span', { class: 'chip accent', title: u.finance === 2 ? 'Ekonomi-superuser' : 'Ekonomiadministratör' }, u.finance === 2 ? ' ekonomi+' : ' ekonomi') : null] },
           { label: 'E-post', render: (u) => u.email },
-          { label: 'Kategori', render: (u) => u.category_name || '' },
+          { label: 'Kategori', render: (u) => [u.category_name || '', u.cost_center_code ? h('div', { class: 'small muted' }, `KST ${u.cost_center_code}`) : null] },
           { label: 'BM', render: (u) => u.bm_name || '' },
           { label: 'Chef', render: (u) => u.manager_name || '' },
           {
@@ -98,12 +99,13 @@ async function usersTab(root) {
   }
 
   async function edit(existing) {
-    const { categories, users } = await refs();
+    const { categories, users, costCenters } = await refs();
     const fields = [
       { name: 'name', label: 'Namn', required: true, maxlength: 100 },
       { name: 'email', label: 'E-post', type: 'email', required: true },
       ...(isAdmin() ? [{ name: 'role', label: 'Roll', type: 'select', options: [{ value: 'user', label: 'Användare' }, { value: 'admin', label: 'Administratör' }] }] : []),
       { name: 'category_id', label: 'Kategori', type: 'select', options: optionList(categories, { blank: '(ingen)' }) },
+      { name: 'cost_center_id', label: 'Kostnadsställe', type: 'select', options: optionList(costCenters.filter((c) => c.active || c.id === existing?.cost_center_id), { blank: '(inget)', label: (c) => `${c.code} ${c.name}` }), hint: 'Personens tid och TB räknas på kostnadsstället i budget och rapporter.' },
       { name: 'bm_id', label: 'BM / konsultchef (attesterar allt som rapporteras)', type: 'select', options: optionList(users.filter((u) => (u.active || u.id === existing?.bm_id) && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }), hint: 'Har användaren en BM är det bara BM som attesterar tid, utlägg och körningar. Utan BM attesterar projektledaren.' },
       { name: 'manager_id', label: 'Chef (attesterar när BM och projektledare saknas)', type: 'select', options: optionList(users.filter((u) => u.active && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }) },
       { name: 'weekly_hours', label: 'Arbetstid per vecka (tim)', type: 'number', step: '0.5', min: '0', max: '80', hint: 'Normtiden. Helgdagar räknas bort automatiskt.' },
@@ -395,6 +397,60 @@ async function projectsTab(root) {
 }
 
 // ── Kategorier ──────────────────────────────────────────────────────────
+// ── Kostnadsställen ─────────────────────────────────────────────────────
+async function costCentersTab(root) {
+  let box;
+  async function reload() {
+    const rows = await get('/api/cost-centers');
+    setKids(
+      box,
+      dataTable({
+        rows,
+        empty: 'Inga kostnadsställen ännu. Lägg till dem för att följa upp budget och TB per enhet, kontor eller affärsområde.',
+        rowClass: (c) => (c.active ? '' : 'inactive'),
+        columns: [
+          { label: 'Kod', render: (c) => c.code },
+          { label: 'Namn', render: (c) => [c.name, c.active ? null : h('span', { class: 'chip' }, ' inaktivt')] },
+          { label: 'Personer', num: true, render: (c) => c.users },
+          {
+            label: '',
+            class: 'actions',
+            render: (c) => [
+              actionBtn('Ändra', () => edit(c)),
+              ' ',
+              c.users
+                ? null
+                : actionBtn('Ta bort', () => guarded(async () => {
+                    if (!(await confirmDialog(`Ta bort kostnadsstället ${c.code} ${c.name}?`, { confirmLabel: 'Ta bort', danger: true }))) return;
+                    await del(`/api/cost-centers/${c.id}`);
+                    await reload();
+                  }), 'danger'),
+            ],
+          },
+        ],
+      }),
+    );
+  }
+  function edit(existing) {
+    editDialog({
+      title: existing ? `Ändra ${existing.code}` : 'Nytt kostnadsställe',
+      values: existing ? { ...existing, active: !!existing.active } : {},
+      fields: [
+        { name: 'code', label: 'Kod', required: true, maxlength: 20, hint: 'Samma kod som i bokföringen, så att underlagen kan föras över.' },
+        { name: 'name', label: 'Namn', required: true, maxlength: 80 },
+        ...(existing ? [{ name: 'active', label: 'Aktivt', type: 'checkbox' }] : []),
+      ],
+      onSave: async (v) => {
+        if (existing) await patch(`/api/cost-centers/${existing.id}`, v);
+        else await post('/api/cost-centers', v);
+        await reload();
+      },
+    });
+  }
+  box = listSection(root, { title: 'Kostnadsställen', intro: 'Enheter, kontor eller affärsområden som tid, TB och budget följs upp per. Personer kopplas under Användare.', newLabel: '+ Nytt kostnadsställe', onNew: () => edit(null) });
+  await reload();
+}
+
 async function categoriesTab(root) {
   let box;
   async function reload() {
@@ -866,5 +922,5 @@ export async function renderAdmin(root, params) {
   );
   const body = h('div', { class: 'stack' });
   add(root, body);
-  await { anvandare: usersTab, kunder: customersTab, projekt: projectsTab, avtal: contractsTab, kategorier: categoriesTab, provision: commissionTab, franvaro: absenceTab, installningar: settingsTab, logg: logTab }[active](body);
+  await { anvandare: usersTab, kunder: customersTab, projekt: projectsTab, avtal: contractsTab, kategorier: categoriesTab, kst: costCentersTab, provision: commissionTab, franvaro: absenceTab, installningar: settingsTab, logg: logTab }[active](body);
 }
