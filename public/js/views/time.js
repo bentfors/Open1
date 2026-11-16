@@ -39,7 +39,10 @@ export async function renderTime(root, params) {
   const [targets, first] = await Promise.all([get('/api/my/targets'), get(`/api/time/week${requested ? `?start=${requested}` : ''}`)]);
   const data = first;
   setKids(root, );
-  const normMinutes = Math.round(data.user.weekly_hours * 60);
+  // Normtiden kommer från servern och räknar bort helgdagar och dagar utanför anställningen.
+  const normMinutes = data.norm_minutes ?? Math.round(data.user.weekly_hours * 60);
+  const holidays = data.holidays || {};
+  const offDay = (d) => isWeekend(d) || !!holidays[d];
 
   const entries = new Map(); // "radnyckel|datum" → post
   const rowsByKey = new Map();
@@ -105,7 +108,8 @@ export async function renderTime(root, params) {
     bar.style.width = `${pct}%`;
     progress.classList.toggle('over', normMinutes > 0 && total >= normMinutes);
     progress.setAttribute('aria-valuenow', total);
-    summary.textContent = `Rapporterat ${fmtHours(total) || '0'} av ${fmtHours(normMinutes) || '0'} h`;
+    const weekdayHolidays = data.days.filter((d) => holidays[d] && !isWeekend(d)).map((d) => holidays[d]);
+    summary.textContent = `Rapporterat ${fmtHours(total) || '0'} av ${fmtHours(normMinutes) || '0'} h${weekdayHolidays.length ? ` · ${weekdayHolidays.join(' och ')} är ${weekdayHolidays.length > 1 ? 'lediga' : 'ledig'}` : ''}`;
 
     const list = [...entries.values()];
     const count = (...s) => list.filter((e) => s.includes(e.status)).length;
@@ -207,7 +211,7 @@ export async function renderTime(root, params) {
         h('div', { class: 'row-title' }, row.title),
         row.sub ? h('div', { class: 'small' }, row.sub, ' ', row.billable ? h('span', { class: 'chip accent' }, 'Debiterbar') : null) : null,
       ),
-      data.days.map((d) => h('td', { class: isWeekend(d) ? 'weekend' : '' }, buildCell(row, d))),
+      data.days.map((d) => h('td', { class: offDay(d) ? 'weekend' : '' }, buildCell(row, d))),
       totalCell,
     );
     return tr;
@@ -319,7 +323,15 @@ export async function renderTime(root, params) {
     'tr',
     {},
     h('th', { class: 'label' }, 'Projekt / aktivitet'),
-    data.days.map((d) => h('th', { class: d === data.today ? 'today' : '' }, h('div', { class: 'dow' }, fmtDow(d)), h('div', {}, fmtShort(d)))),
+    data.days.map((d) =>
+      h(
+        'th',
+        { class: [d === data.today ? 'today' : '', holidays[d] ? 'holiday' : ''].join(' ').trim(), title: holidays[d] || null },
+        h('div', { class: 'dow' }, fmtDow(d)),
+        h('div', {}, fmtShort(d)),
+        holidays[d] ? h('div', { class: 'holiday-name' }, holidays[d]) : null,
+      ),
+    ),
     h('th', { class: 'total' }, 'Summa'),
   );
   const foot = h(

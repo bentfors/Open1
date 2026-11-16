@@ -7,6 +7,8 @@ export const SETTING_DEFAULTS = {
   tb_cost_basis: 'worked',
   bench_cap_hours: '300',
   forecast_utilization: '90',
+  // Midsommar-, jul- och nyårsafton räknas som lediga dagar i normtid och prognos.
+  holiday_eves_off: '1',
 };
 
 export function getSettings(db) {
@@ -16,6 +18,7 @@ export function getSettings(db) {
   // Tomt betyder ingen gräns.
   out.bench_cap_hours = out.bench_cap_hours === '' ? null : Number(out.bench_cap_hours);
   out.forecast_utilization = Number(out.forecast_utilization);
+  out.holiday_eves_off = out.holiday_eves_off !== '0';
   return out;
 }
 
@@ -75,3 +78,6 @@ export function approverClause({ entry, project = 'p', owner = 'u', bm = false }
 export const approverParams = (actor) => ({ isAdmin: isAdmin(actor) ? 1 : 0, actor: actor.id });
 
 export const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Inställningen som styr om aftnarna är lediga, i den form helgdagsfunktionerna vill ha.
+export const holidayOptions = (settings) => ({ eves: settings.holiday_eves_off });

@@ -799,7 +799,14 @@ async function settingsTab(root) {
       min: '1',
       max: '100',
       required: true,
-      hint: 'Andel av arbetsdagarna som räknas som arbetade, efter semester, sjukdom och helgdagar. Röda dagar räknas inte av var för sig.',
+      hint: 'Andel av arbetsdagarna som räknas som arbetade, efter semester och sjukdom. Helgdagarna räknas bort för sig.',
+    },
+    {
+      name: 'holiday_eves_off',
+      label: 'Midsommar-, jul- och nyårsafton är lediga',
+      type: 'checkbox',
+      hint: 'Räknas bort från normtid, debiteringsgrad och prognos, utöver de allmänna helgdagarna.',
+      full: true,
     },
   ];
   const form = buildForm(fields, s);

@@ -87,6 +87,7 @@ const FIELD_LABELS = {
   tb_cost_basis: 'Kostnad i TB',
   bench_cap_hours: 'Gräns för odebiterbar tid (tim)',
   forecast_utilization: 'Beläggning i prognoser (%)',
+  holiday_eves_off: 'Midsommar-, jul- och nyårsafton lediga',
   minutes: 'Minuter',
   note: 'Anteckning',
   date: 'Datum',
@@ -129,7 +130,7 @@ const VALUE_LABELS = {
 };
 
 const USER_FIELDS = new Set(['bm_id', 'manager_id', 'earner_id', 'user_id']);
-const BOOL_FIELDS = new Set(['active', 'billable', 'open_for_all']);
+const BOOL_FIELDS = new Set(['active', 'billable', 'open_for_all', 'holiday_eves_off']);
 const FINANCE_LEVELS = ['Ingen', 'Ekonomi', 'Ekonomi-superuser'];
 
 const norm = (v) => (v === null || v === undefined ? '' : typeof v === 'boolean' ? (v ? '1' : '0') : String(v));

@@ -1,18 +1,18 @@
-import { addDays, addMonths, isWeekend, monthEnd, quarterEnd, quarterStart, today } from './dates.js';
+import { addDays, addMonths, monthEnd, quarterEnd, quarterStart, today } from './dates.js';
+import { employedOn, isWorkday } from './holidays.js';
 import { actualProvider, computeCommissions, listRules } from './commission.js';
-import { getSettings } from './domain.js';
+import { getSettings, holidayOptions } from './domain.js';
 
 /**
  * Prognos för provision, byggd på avtalsregistret. Varje konsult simuleras dag för dag:
- *  - Arbetsdagar är måndag–fredag. Röda dagar räknas inte, beläggningen (inställning) tar höjd för semester, sjukdom och helgdagar.
+ *  - Arbetsdagar är måndag–fredag utom svenska helgdagar (och aftnarna, om inställningen säger så).
+ *    Beläggningen (inställning) tar höjd för semester och sjukdom.
  *  - En dag med uppdrag ger intäkt = timmar × pris. Kostnaden följer inställningen för TB (all arbetad tid, eller bara debiterbar).
  *  - En dag utan uppdrag men under anställning är bänk: odebiterbar tid som räknas som negativ enligt bänkgränsen,
  *    med räknaren som den står enligt attesterad tid vid periodens början.
  *  - Utan anställningsavtal antas personen vara anställd tillsvidare.
  * Provisionen räknas sedan av samma motor som utfallet, så trappa, golv och bänkgräns beter sig likadant.
  */
-
-const FAR = '9999-12-31';
 
 function loadPeople(db, extraIds) {
   const ids = [...new Set(extraIds)];
@@ -34,16 +34,13 @@ function loadPeople(db, extraIds) {
   }));
 }
 
-const employed = (person, day) =>
-  !person.employments.length || person.employments.some((e) => e.start_date <= day && day <= (e.end_date ?? FAR));
-
-function simulatePerson(person, { from, to, utilization, worked, capMinutes, carryMinutes, excluded }) {
+function simulatePerson(person, { from, to, utilization, worked, capMinutes, carryMinutes, excluded, holidays }) {
   const days = new Map();
   let counter = carryMinutes;
   const daily = (person.weekly_hours / 5) * utilization;
   for (let d = from; d <= to; d = addDays(d, 1)) {
-    if (isWeekend(d) || !employed(person, d)) continue;
-    const active = person.assignments.filter((a) => !excluded.has(a.id) && a.start_date <= d && d <= (a.end_date ?? FAR));
+    if (!isWorkday(d, holidays) || !employedOn(person.employments, d)) continue;
+    const active = person.assignments.filter((a) => !excluded.has(a.id) && a.start_date <= d && d <= (a.end_date ?? '9999-12-31'));
     if (active.length) {
       const assigned = active.reduce((s, a) => s + a.hours_per_week / 5, 0) * utilization;
       const revenue = active.reduce((s, a) => s + (a.hours_per_week / 5) * a.hourly_rate, 0) * utilization;
@@ -121,6 +118,7 @@ export function forecast(db, { earnerId, months = 12, virtual = [], excludeAssig
         capMinutes,
         carryMinutes: person.virtual ? 0 : actual.carry(person.id, simFrom),
         excluded,
+        holidays: holidayOptions(settings),
       }),
     );
   }

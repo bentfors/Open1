@@ -309,6 +309,8 @@ table.grid { width: 100%; border-collapse: collapse; min-width: 760px; }
 table.grid th, table.grid td { padding: 0.4rem 0.4rem; border-bottom: 1px solid var(--border); text-align: center; }
 table.grid th { background: var(--surface-2); font-size: 0.78rem; color: var(--muted); font-weight: 500; }
 table.grid th.today { color: var(--accent); background: var(--accent-soft); }
+table.grid th.holiday { color: var(--accent-pale); }
+table.grid .holiday-name { font-size: 0.68rem; font-weight: 400; color: var(--accent-pale); line-height: 1.2; margin-top: 0.15rem; }
 table.grid th .dow { text-transform: uppercase; letter-spacing: 0.07em; }
 table.grid td.label, table.grid th.label { text-align: left; min-width: 230px; padding-left: 0.9rem; }
 table.grid td.weekend { background: #070707; }

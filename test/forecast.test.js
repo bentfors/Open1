@@ -4,7 +4,8 @@ import { buildWorld, addTime } from './world.js';
 import { setTodayForTests, daysBetween } from '../src/dates.js';
 import { createUser } from './helpers.js';
 
-// Idag är 2026-01-12 (en måndag). Arbetsdagar 2026: jan 22, feb 20, mar 22, apr 22, maj 21, jun 22.
+// Idag är 2026-01-12 (en måndag). Arbetsdagar 2026, helgdagar och aftnar borträknade: jan 20 (nyårsdagen, trettondedagen),
+// feb 20, mar 22, apr 20 (långfredagen, annandag påsk), maj 19 (första maj, Kristi himmelsfärd), jun 21 (midsommarafton).
 // Anna: 40 tim/vecka (8 tim/dag), timkostnad 500. Uppdrag hos Acme 1 jan–31 mar 2026, 1200 kr/tim, 40 tim/vecka.
 // Per arbetsdag i uppdrag: intäkt 9600, kostnad 4000, TB 5600. Beläggningen sätts till 100 % om inget annat anges.
 describe('avtalsregister och prognos', () => {
@@ -51,26 +52,27 @@ describe('avtalsregister och prognos', () => {
 
   test('prognos per månad: arbetsdagar × 5600 × 10 %', async () => {
     const s = await stats();
-    assert.deepEqual([row(s, ids.month, '2026-01').commission, row(s, ids.month, '2026-01').state], [12320, 'running']);
+    assert.deepEqual([row(s, ids.month, '2026-01').commission, row(s, ids.month, '2026-01').state], [11200, 'running']);
     assert.equal(row(s, ids.month, '2026-02').commission, 11200);
     assert.equal(row(s, ids.month, '2026-02').state, 'forecast');
     assert.equal(row(s, ids.month, '2026-03').commission, 12320);
-    assert.equal(row(s, ids.month, '2026-01').tb, 123200, '22 × 5600');
+    assert.equal(row(s, ids.month, '2026-01').tb, 112000, '20 × 5600: nyårsdagen och trettondedagen räknas inte');
   });
 
   test('efter uppdraget räknas bänk: negativ TB, golvas, och tar slut vid 300 timmar', async () => {
     const s = await stats();
     const apr = row(s, ids.month, '2026-04');
-    assert.deepEqual([apr.tb, apr.raw_commission, apr.floored, apr.commission, apr.capped_hours], [-88000, -8800, true, 0, 0], '22 × 8 h × 500');
+    assert.deepEqual([apr.tb, apr.raw_commission, apr.floored, apr.commission, apr.capped_hours], [-80000, -8000, true, 0, 0], '20 × 8 h × 500');
     const may = row(s, ids.month, '2026-05');
-    assert.deepEqual([may.tb, may.tb_actual, may.capped_hours], [-62000, -84000, 44], '176 h förbrukade, 124 h kvar av 300');
+    // 19 arbetsdagar = 152 h. 160 h förbrukade i april, 140 h kvar av 300: 140 h räknas, 12 h kapas.
+    assert.deepEqual([may.tb, may.tb_actual, may.capped_hours], [-70000, -76000, 12], '−140 × 500, men −19 × 4000 i verkligheten');
     assert.deepEqual([row(s, ids.month, '2026-06').tb, row(s, ids.month, '2026-06').commission], [0, 0], 'efter 300 timmar räknas 0');
   });
 
   test('kvartal summerar månaderna i perioden', async () => {
     const s = await stats();
-    assert.deepEqual([row(s, ids.quarter, 'Q1 2026').tb, row(s, ids.quarter, 'Q1 2026').commission], [358400, 35840]);
-    assert.equal(row(s, ids.quarter, 'Q2 2026').tb, -150000, '−88 000 − 62 000 + 0');
+    assert.deepEqual([row(s, ids.quarter, 'Q1 2026').tb, row(s, ids.quarter, 'Q1 2026').commission], [347200, 34720], '112 000 + 112 000 + 123 200');
+    assert.equal(row(s, ids.quarter, 'Q2 2026').tb, -150000, '−80 000 − 70 000 + 0');
     assert.equal(row(s, ids.quarter, 'Q2 2026').commission, 0);
   });
 
@@ -93,16 +95,16 @@ describe('avtalsregister och prognos', () => {
   test('summering per månad där provisionen tjänas in', async () => {
     const m = Object.fromEntries((await stats()).months.map((x) => [x.month, x]));
     assert.deepEqual([m['2025-12'].actual, m['2025-12'].forecast], [1620, 0], '560 + 560 (kvartalet slutar) + 500');
-    assert.deepEqual([m['2026-01'].actual, m['2026-01'].forecast], [0, 12820], '12 320 + 500');
+    assert.deepEqual([m['2026-01'].actual, m['2026-01'].forecast], [0, 11700], '11 200 + 500');
     assert.equal(m['2026-02'].forecast, 11700);
-    assert.equal(m['2026-03'].forecast, 48660, '12 320 + 500 + kvartalet 35 840');
+    assert.equal(m['2026-03'].forecast, 47540, '12 320 + 500 + kvartalet 34 720');
     assert.equal(m['2026-04'].forecast, 0);
     assert.equal(Object.keys(m).length, 23, '11 månader bakåt, innevarande månad och 11 framåt');
   });
 
   test('nyckeltal och konsultlista', async () => {
     const s = await stats();
-    assert.equal(s.kpis.forecast_total, 73180, '35 840 + 35 840 + 1 500');
+    assert.equal(s.kpis.forecast_total, 70940, 'månad 34 720 + kvartal 34 720 + 3 × 500');
     assert.deepEqual([s.kpis.consultants, s.kpis.in_assignment, s.kpis.commission_ytd], [1, 1, 0]);
     assert.equal(s.kpis.tb_last_month, 5600);
     const a = s.consultants[0];
@@ -111,7 +113,7 @@ describe('avtalsregister och prognos', () => {
     assert.equal(a.employment.tenure_days, daysBetween('2020-01-01', '2026-01-12'));
     assert.deepEqual([a.assignments[0].customer_name, a.assignments[0].days_left, a.in_assignment_now], ['Acme AB', 78, true]);
     assert.deepEqual([a.last_month.tb, a.last_month.billable_hours, a.this_month.tb, a.bench_hours], [5600, 8, 5600, 0]);
-    assert.equal(a.forecast_tb_3m, 358400);
+    assert.equal(a.forecast_tb_3m, 347200);
   });
 
   test('uppdrag som tar slut visas med vad de är värda för mottagaren', async () => {
@@ -120,12 +122,12 @@ describe('avtalsregister och prognos', () => {
     const e = s.expiring[0];
     assert.deepEqual([e.consultant, e.customer, e.end_date, e.days_left], ['Anna Konsult', 'Acme AB', '2026-03-31', 78]);
     // Utan uppdraget blir hela prognosen 0: bänk ger negativ TB som golvas, och inga konsulter i uppdrag.
-    assert.equal(e.at_risk, 73180);
+    assert.equal(e.at_risk, 70940);
   });
 
-  test('beläggningen skalar intäkt och kostnad: 90 % ger 11 088 i januari', async () => {
+  test('beläggningen skalar intäkt och kostnad: 90 % ger 10 080 i januari', async () => {
     await admin.patch('/api/settings', { forecast_utilization: 90 });
-    assert.equal(row(await stats(), ids.month, '2026-01').commission, 11088, '123 200 × 0,9 × 10 %');
+    assert.equal(row(await stats(), ids.month, '2026-01').commission, 10080, '112 000 × 0,9 × 10 %');
     await admin.patch('/api/settings', { forecast_utilization: 100 });
   });
 
@@ -137,8 +139,8 @@ describe('avtalsregister och prognos', () => {
     assert.deepEqual([m['2026-02'].baseline, m['2026-02'].scenario, m['2026-02'].delta], [11700, 21800, 10100]);
     // Mars: 22 × 4800 = 105 600 → 10 560, plus 500, plus kvartalsregeln (96 000 + 105 600) × 10 % = 20 160.
     assert.equal(m['2026-03'].delta, 31220);
-    // April: Annas negativa bänk (−88 000) kvittas mot den nya konsultens +105 600 → 17 600 × 10 % = 1 760, plus 500.
-    assert.equal(m['2026-04'].delta, 2260);
+    // April (20 arbetsdagar): Annas negativa bänk (−80 000) kvittas mot den nya konsultens +96 000 → 16 000 × 10 % = 1 600, plus 500.
+    assert.equal(m['2026-04'].delta, 2100);
     assert.equal(r.delta_total, r.scenario_total - r.baseline_total);
     assert.ok(r.delta_total > 0);
   });
@@ -146,7 +148,7 @@ describe('avtalsregister och prognos', () => {
   test('en tänkt konsult påverkar inte månaderna före sin start', async () => {
     const r = (await bo.client.get('/api/stats/scenario?count=1&rate=1000&cost=400&start=2026-02-01')).json;
     const jan = r.months.find((x) => x.month === '2026-01');
-    assert.deepEqual([jan.baseline, jan.scenario, jan.delta], [12820, 12820, 0], 'ingen bänkkostnad i januari');
+    assert.deepEqual([jan.baseline, jan.scenario, jan.delta], [11700, 11700, 0], 'ingen bänkkostnad i januari');
   });
 
   test('ett scenario med slutdatum och flera konsulter', async () => {
@@ -171,7 +173,7 @@ describe('avtalsregister och prognos', () => {
     assert.equal((await stats(bo.client, `?earner_id=${cia.id}`)).earner.name, 'Bo AM', 'parametern ignoreras');
     const nothing = await stats(eve.client);
     assert.deepEqual([nothing.consultants.length, nothing.timeline.length, nothing.kpis.forecast_total], [0, 0, 0]);
-    assert.equal((await stats(admin, `?earner_id=${bo.id}`)).kpis.forecast_total, 73180);
+    assert.equal((await stats(admin, `?earner_id=${bo.id}`)).kpis.forecast_total, 70940);
     assert.equal((await admin.get('/api/stats/people')).json.length, 1);
     assert.equal((await bo.client.get('/api/stats/people')).status, 403);
   });
@@ -182,7 +184,7 @@ describe('avtalsregister och prognos', () => {
     assert.equal((await cia.client.get('/api/auth/me')).json.user.has_stats, true);
     const s = await stats(cia.client);
     assert.deepEqual(s.consultants.map((c) => [c.name, c.relation]), [['Anna Konsult', ['BM']]]);
-    assert.equal(s.consultants[0].forecast_tb_3m, 358400, 'prognosen finns även för konsulter utan regel');
+    assert.equal(s.consultants[0].forecast_tb_3m, 347200, 'prognosen finns även för konsulter utan regel');
     assert.equal(s.kpis.forecast_total, 0, 'utan regler ingen provision');
   });
 

@@ -2,7 +2,8 @@ import { bad, conflict, forbidden, notFound } from '../http.js';
 import { f, parse, isDate, reqId } from '../validate.js';
 import { insertRow, tx } from '../db.js';
 import { today, weekStart, weekDays } from '../dates.js';
-import { getSettings, isAdmin, resolveRates } from '../domain.js';
+import { getSettings, holidayOptions, isAdmin, resolveRates } from '../domain.js';
+import { holidaysBetween, normMinutes } from '../holidays.js';
 import { audit, changeOf } from '../audit.js';
 
 const hoursText = (minutes) => (minutes == null ? '' : `${Math.round(minutes / 6) / 10} tim`);
@@ -51,12 +52,18 @@ export function registerTime({ db, router }) {
     const entries = db
       .prepare(`${ENTRY_SELECT} WHERE te.user_id = ? AND te.work_date BETWEEN ? AND ? ORDER BY c.name, p.code, a.name, at.name`)
       .all(userId, days[0], days[6]);
+    const settings = getSettings(db);
+    const opts = holidayOptions(settings);
+    const employments = db.prepare('SELECT start_date, end_date FROM employments WHERE user_id = ?').all(userId);
     return {
       week_start: start,
       days,
       user: owner,
       today: today(),
-      locked_until: getSettings(db).locked_until,
+      locked_until: settings.locked_until,
+      // Normtiden räknar bort helgdagar och dagar utanför anställningen.
+      norm_minutes: normMinutes({ weekly_hours: owner.weekly_hours, employments }, days[0], days[6], opts),
+      holidays: Object.fromEntries(holidaysBetween(days[0], days[6], opts).map((x) => [x.date, x.name])),
       entries,
     };
   });
