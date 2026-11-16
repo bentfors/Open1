@@ -44,6 +44,22 @@ describe('avtalsvarningar och rapportering åt någon annan', () => {
     assert.ok(!(await warnings()).some((t) => t.startsWith('Ulf Underkonsult')));
   });
 
+  test('underkonsulter: inget anställningsavtal krävs och ingen bänkkostnad utan uppdrag', async () => {
+    await admin.patch('/api/settings', { forecast_utilization: 100 });
+    const kst = (await admin.post('/api/cost-centers', { code: 'UK', name: 'Underkonsulter' })).json.id;
+    const vera = await createUser(w.app, admin, { email: 'vera@t.se', name: 'Vera Underkonsult', pay_type: 'subcontractor', cost_rate: 900, bm_id: cia.id, cost_center_id: kst });
+    const texts = await warnings();
+    assert.ok(!texts.some((t) => t.startsWith('Vera Underkonsult saknar anställningsavtal')));
+    assert.ok(texts.includes('Vera Underkonsult har inget pågående eller kommande uppdrag.'), 'utan bänkvarning');
+    const june = async () => (await admin.get(`/api/budget?year=2026&kst=${kst}`)).json.months;
+    assert.deepEqual((await june()).find((m) => m.month === '2026-06').forecast, { revenue: 0, margin: 0 }, 'ingen bänkkostnad');
+    // Uppdrag i juni: 21 arbetsdagar × 8 h, intäkt 1300 och inköp 900 per timme.
+    await admin.post('/api/assignments', { user_id: vera.id, customer_id: w.customer, start_date: '2026-06-01', end_date: '2026-06-30', hourly_rate: 1300, hours_per_week: 40 });
+    const months = await june();
+    assert.deepEqual(months.find((m) => m.month === '2026-06').forecast, { revenue: 218400, margin: 67200 });
+    assert.deepEqual(months.find((m) => m.month === '2026-07').forecast, { revenue: 0, margin: 0 }, 'efter uppdraget kostar hen inget');
+  });
+
   test('administratören hämtar en annan persons projekt, rapporterar, skickar in och tar tillbaka', async () => {
     const annas = (await admin.get(`/api/my/targets?user_id=${anna.id}`)).json.activities.map((a) => a.code);
     assert.ok(annas.includes('ACME-1'), 'Anna är medlem i ACME-1');

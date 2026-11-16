@@ -307,7 +307,7 @@ async function payrollView(root) {
           'div',
           { class: 'kpis' },
           kpi('Personer i underlaget', String(p.rows.length)),
-          kpi('Arbetade timmar, timlön', `${fmtNum(t.worked_hours)} h`),
+          kpi('Arbetade timmar, timlön', `${fmtNum(t.hourly_hours)} h`),
           kpi('Utlägg att ersätta', fmtMoney(t.expenses)),
           kpi('Milersättning', fmtMoney(round(t.mileage_taxfree + t.mileage_taxable)), h('div', { class: 'small muted' }, `varav ${fmtMoney(t.mileage_taxable)} skattepliktigt`)),
         ),

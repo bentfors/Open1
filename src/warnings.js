@@ -9,7 +9,7 @@ export function contractWarnings(db) {
   const warnings = [];
   const consultants = db
     .prepare(
-      `SELECT u.id, u.name FROM users u WHERE u.active = 1 AND (
+      `SELECT u.id, u.name, u.pay_type FROM users u WHERE u.active = 1 AND (
          u.bm_id IS NOT NULL OR EXISTS (SELECT 1 FROM commission_rule_sources s WHERE s.user_id = u.id))
        ORDER BY u.name`,
     )
@@ -18,8 +18,12 @@ export function contractWarnings(db) {
     const current = db
       .prepare(`SELECT COUNT(*) AS n FROM assignments WHERE user_id = ? AND (end_date IS NULL OR end_date >= ?)`)
       .get(c.id, now).n;
-    if (!current) warnings.push({ type: 'no_assignment', user_id: c.id, text: `${c.name} har inget pågående eller kommande uppdrag. Prognosen räknar med bänktid.` });
-    if (!db.prepare('SELECT 1 FROM employments WHERE user_id = ?').get(c.id)) {
+    if (!current) {
+      const bench = c.pay_type === 'subcontractor' ? '' : ' Prognosen räknar med bänktid.';
+      warnings.push({ type: 'no_assignment', user_id: c.id, text: `${c.name} har inget pågående eller kommande uppdrag.${bench}` });
+    }
+    // Underkonsulter är inte anställda och ska inte ha något anställningsavtal.
+    if (c.pay_type !== 'subcontractor' && !db.prepare('SELECT 1 FROM employments WHERE user_id = ?').get(c.id)) {
       warnings.push({ type: 'no_employment', user_id: c.id, text: `${c.name} saknar anställningsavtal. Prognosen antar tillsvidareanställning.` });
     }
   }

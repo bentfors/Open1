@@ -49,7 +49,7 @@ export function buildStats(db, earnerId, { months = 12 } = {}) {
   const people = consultantIds.length
     ? db
         .prepare(
-          `SELECT u.id, u.name, u.weekly_hours, c.name AS category FROM users u LEFT JOIN categories c ON c.id = u.category_id
+          `SELECT u.id, u.name, u.weekly_hours, u.pay_type, c.name AS category FROM users u LEFT JOIN categories c ON c.id = u.category_id
            WHERE u.id IN (${consultantIds.map(() => '?').join(',')}) ORDER BY u.name`,
         )
         .all(...consultantIds)
@@ -73,7 +73,7 @@ export function buildStats(db, earnerId, { months = 12 } = {}) {
     const last = actual.sourceBasis(p.id, prevStart, prevEnd);
     const sofar = actual.sourceBasis(p.id, monthStart(t), t);
     if (!list.length) warnings.push(`${p.name} har inget pågående eller kommande uppdrag i avtalsregistret. Prognosen räknar med bänktid.`);
-    if (!emp) warnings.push(`${p.name} saknar anställningsavtal i registret. Prognosen antar tillsvidareanställning.`);
+    if (!emp && p.pay_type !== 'subcontractor') warnings.push(`${p.name} saknar anställningsavtal i registret. Prognosen antar tillsvidareanställning.`);
     return {
       id: p.id,
       name: p.name,

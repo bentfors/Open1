@@ -98,6 +98,8 @@ export function payrollBasis(db, { from, to }) {
   const sum = (fn) => round2(rows.reduce((s, r) => s + fn(r), 0));
   const totals = {
     worked_hours: sum((r) => r.worked_hours),
+    // Bara timlönade får betalt per timme; det är den siffran som går till lönen.
+    hourly_hours: sum((r) => (r.pay_type === 'hourly' ? r.worked_hours : 0)),
     absence: absenceTypes
       .map((a) => ({ name: a.name, hours: sum((r) => r.absence.find((x) => x.type_id === a.id)?.hours ?? 0) }))
       .filter((a) => a.hours),

@@ -73,7 +73,7 @@ describe('löneunderlag och underkonsulter', () => {
     assert.deepEqual(a.mileage, { count: 1, km: 100, amount: 300, taxfree: 250, taxable: 50 });
     assert.deepEqual(a.pending, { time_hours: 8, expenses: 1, mileage: 0 });
     assert.equal(p.rows[1].worked_hours, 8);
-    assert.deepEqual(p.totals, { worked_hours: 20, absence: [{ name: 'Semester', hours: 8 }, { name: 'Sjukdom', hours: 4 }], expenses: 500, mileage_taxfree: 250, mileage_taxable: 50, pending_people: 1 });
+    assert.deepEqual(p.totals, { worked_hours: 20, hourly_hours: 8, absence: [{ name: 'Semester', hours: 8 }, { name: 'Sjukdom', hours: 4 }], expenses: 500, mileage_taxfree: 250, mileage_taxable: 50, pending_people: 1 });
   });
 
   test('en rad per person och löneart, milersättning i mil', async () => {

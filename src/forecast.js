@@ -10,7 +10,7 @@ import { getSettings, holidayOptions } from './domain.js';
  *  - En dag med uppdrag ger intäkt = timmar × pris. Kostnaden följer inställningen för TB (all arbetad tid, eller bara debiterbar).
  *  - En dag utan uppdrag men under anställning är bänk: odebiterbar tid som räknas som negativ enligt bänkgränsen,
  *    med räknaren som den står enligt attesterad tid vid periodens början.
- *  - Utan anställningsavtal antas personen vara anställd tillsvidare.
+ *  - Utan anställningsavtal antas personen vara anställd tillsvidare, utom underkonsulter som bara kostar under uppdrag.
  * Provisionen räknas sedan av samma motor som utfallet, så trappa, golv och bänkgräns beter sig likadant.
  */
 
@@ -19,7 +19,7 @@ function loadPeople(db, extraIds) {
   const marks = ids.map(() => '?').join(',');
   const users = db
     .prepare(
-      `SELECT id, name, weekly_hours, cost_rate, category_id, cost_center_id FROM users
+      `SELECT id, name, weekly_hours, cost_rate, category_id, cost_center_id, pay_type FROM users
        WHERE active = 1 AND (id IN (SELECT user_id FROM assignments)${ids.length ? ` OR id IN (${marks})` : ''})`,
     )
     .all(...ids);
@@ -41,6 +41,8 @@ function simulatePerson(person, { from, to, utilization, worked, capMinutes, car
   for (let d = from; d <= to; d = addDays(d, 1)) {
     if (!isWorkday(d, holidays) || !employedOn(person.employments, d)) continue;
     const active = person.assignments.filter((a) => !excluded.has(a.id) && a.start_date <= d && d <= (a.end_date ?? '9999-12-31'));
+    // En underkonsult får bara betalt för uppdrag: utan uppdrag finns ingen bänkkostnad.
+    if (!active.length && person.pay_type === 'subcontractor') continue;
     if (active.length) {
       const assigned = active.reduce((s, a) => s + a.hours_per_week / 5, 0) * utilization;
       const revenue = active.reduce((s, a) => s + (a.hours_per_week / 5) * a.hourly_rate, 0) * utilization;
