@@ -21,7 +21,7 @@ const ROUTES = {
   attest: { label: 'Attest', view: renderApprovals, badge: true },
   statistik: { label: 'Statistik', view: renderStats, stats: true },
   rapporter: { label: 'Rapporter', view: renderReports },
-  fakturering: { label: 'Fakturering', view: renderBilling, finance: true },
+  fakturering: { label: 'Ekonomi', view: renderBilling, finance: true },
   admin: { label: 'Admin', view: renderAdmin, admin: true },
   konto: { label: 'Mitt konto', view: renderAccount, hidden: true },
 };

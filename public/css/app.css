@@ -237,6 +237,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .alert { padding: 0.7rem 1rem; border-radius: 3px; margin-bottom: 1rem; background: var(--info-soft); color: var(--info); }
 .alert.error { background: var(--danger-soft); color: var(--danger); }
 .alert.warn { background: var(--warn-soft); color: var(--warn); }
+.alert.ok { background: var(--ok-soft); color: var(--ok); }
+.alert a { color: inherit; text-decoration: underline; }
 
 /* ── Tabeller ───────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }

@@ -9,6 +9,12 @@ export const SETTING_DEFAULTS = {
   forecast_utilization: '90',
   // Midsommar-, jul- och nyårsafton räknas som lediga dagar i normtid och prognos.
   holiday_eves_off: '1',
+  // Löneunderlag: skattefri milersättning (kr/km) och lönearter för export. Lönearterna är tomma tills de sätts.
+  mileage_taxfree_rate: '2.5',
+  pay_code_hours: '',
+  pay_code_expenses: '',
+  pay_code_mileage_free: '',
+  pay_code_mileage_taxable: '',
 };
 
 export function getSettings(db) {
@@ -19,6 +25,7 @@ export function getSettings(db) {
   out.bench_cap_hours = out.bench_cap_hours === '' ? null : Number(out.bench_cap_hours);
   out.forecast_utilization = Number(out.forecast_utilization);
   out.holiday_eves_off = out.holiday_eves_off !== '0';
+  out.mileage_taxfree_rate = Number(out.mileage_taxfree_rate);
   return out;
 }
 

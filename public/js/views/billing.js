@@ -10,8 +10,148 @@ function subnav(active) {
     { class: 'subnav' },
     h('a', { href: '#/fakturering', 'aria-current': active === 'att' ? 'page' : null }, 'Att fakturera'),
     h('a', { href: '#/fakturering/underlag', 'aria-current': active === 'underlag' ? 'page' : null }, 'Skapade underlag'),
+    isFinanceSuper() ? h('a', { href: '#/fakturering/lon', 'aria-current': active === 'lon' ? 'page' : null }, 'Löneunderlag') : null,
+    h('a', { href: '#/fakturering/underkonsulter', 'aria-current': active === 'underkonsulter' ? 'page' : null }, 'Underkonsulter'),
     h('a', { href: '#/fakturering/lasning', 'aria-current': active === 'lasning' ? 'page' : null }, 'Periodlåsning'),
   );
+}
+
+// De senaste 13 månaderna, nyast först. Förvald är förra månaden, som lön och inköp normalt gäller.
+function monthChoices() {
+  const now = new Date();
+  return Array.from({ length: 13 }, (_, i) => {
+    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth() - i, 1));
+    return d.toISOString().slice(0, 7);
+  });
+}
+
+function monthPicker(id, value, onchange) {
+  const el = h('select', { id, onchange: (e) => onchange(e.target.value) }, monthChoices().map((m) => h('option', { value: m, selected: m === value }, fmtMonth(m))));
+  return h('div', { class: 'field' }, h('label', { for: id }, 'Månad'), el);
+}
+
+const PAY_TYPE = { monthly: 'Månadslön', hourly: 'Timlön', subcontractor: 'Underkonsult' };
+
+// ── Löneunderlag ───────────────────────────────────────────────────────
+async function payrollView(root) {
+  let month = monthChoices()[1];
+  const result = h('div', { class: 'stack' });
+  const exportLinks = h('div', { class: 'row' });
+
+  async function run() {
+    try {
+      const p = await get(`/api/payroll${qs({ month })}`);
+      const t = p.totals;
+      setKids(
+        exportLinks,
+        h('a', { class: 'btn', href: `/api/payroll${qs({ month, format: 'csv' })}` }, 'Sammanställning (CSV)'),
+        h('a', { class: 'btn', href: `/api/payroll${qs({ month, format: 'lines' })}` }, 'Rader per löneart (CSV)'),
+      );
+      setKids(
+        result,
+        t.pending_people
+          ? h('div', { class: 'alert warn' }, `${t.pending_people} ${t.pending_people === 1 ? 'person har' : 'personer har'} tid, utlägg eller körningar i ${fmtMonth(month)} som inte är attesterade och därför inte är med. `, h('a', { href: '#/rapporter/inrapportering' }, 'Se inrapporteringen'), '.')
+          : h('div', { class: 'alert ok' }, `Allt i ${fmtMonth(month)} är attesterat.`),
+        h(
+          'div',
+          { class: 'kpis' },
+          kpi('Personer i underlaget', String(p.rows.length)),
+          kpi('Arbetade timmar, timlön', `${fmtNum(t.worked_hours)} h`),
+          kpi('Utlägg att ersätta', fmtMoney(t.expenses)),
+          kpi('Milersättning', fmtMoney(round(t.mileage_taxfree + t.mileage_taxable)), h('div', { class: 'small muted' }, `varav ${fmtMoney(t.mileage_taxable)} skattepliktigt`)),
+        ),
+        h(
+          'div',
+          { class: 'card flush' },
+          dataTable({
+            rows: p.rows,
+            empty: `Inga avvikelser eller ersättningar i ${fmtMonth(month)}.`,
+            columns: [
+              { label: 'Person', render: (r) => [r.name, ' ', h('span', { class: 'chip' }, PAY_TYPE[r.pay_type])] },
+              { label: 'Arbetade timmar', num: true, render: (r) => (r.pay_type === 'hourly' ? fmtNum(r.worked_hours) : h('span', { class: 'muted' }, fmtNum(r.worked_hours))) },
+              { label: 'Frånvaro', render: (r) => (r.absence.length ? r.absence.map((a) => h('div', {}, `${a.name} ${fmtNum(a.hours)} h (${a.days} ${a.days === 1 ? 'dag' : 'dagar'})`, a.pay_code ? h('span', { class: 'muted small' }, ` · löneart ${a.pay_code}`) : null)) : '') },
+              { label: 'Utlägg', num: true, render: (r) => (r.expenses.amount ? [fmtMoney(r.expenses.amount), h('div', { class: 'small muted' }, `${r.expenses.count} st, moms ${fmtMoney(r.expenses.vat)}`)] : '') },
+              { label: 'Milersättning', num: true, render: (r) => (r.mileage.amount ? [fmtMoney(r.mileage.amount), h('div', { class: 'small muted' }, `${fmtNum(r.mileage.km)} km${r.mileage.taxable ? `, ${fmtMoney(r.mileage.taxable)} skattepliktigt` : ''}`)] : '') },
+              {
+                label: 'Ej attesterat',
+                render: (r) => {
+                  const parts = [r.pending.time_hours ? `${fmtNum(r.pending.time_hours)} h tid` : null, r.pending.expenses ? `${r.pending.expenses} utlägg` : null, r.pending.mileage ? `${r.pending.mileage} körningar` : null].filter(Boolean);
+                  return parts.length ? h('span', { class: 'chip warn' }, parts.join(', ')) : '';
+                },
+              },
+            ],
+          }),
+        ),
+      );
+    } catch (err) {
+      setKids(result, h('div', { class: 'alert error' }, err.message));
+    }
+  }
+
+  add(
+    root,
+    h('h1', {}, 'Ekonomi'),
+    subnav('lon'),
+    h('div', { class: 'card' }, h('div', { class: 'filters' }, monthPicker('pay-month', month, (v) => { month = v; run(); }), exportLinks)),
+    result,
+    h(
+      'p',
+      { class: 'muted small' },
+      'Underlaget innehåller attesterad frånvaro, utlägg och milersättning för månaden, och arbetade timmar för timlönade. Månadslönade utan avvikelser är inte med. Milersättning upp till ',
+      `${fmtNum(state.settings.mileage_taxfree_rate ?? 2.5)} kr/km`,
+      ' är skattefri, resten skattepliktig. Lönearter sätts under Admin → Inställningar och Admin → Frånvaro. Lås perioden under Periodlåsning när lönen är körd.',
+    ),
+  );
+  await run();
+}
+
+// ── Underkonsulter ─────────────────────────────────────────────────────
+async function subcontractorView(root) {
+  let month = monthChoices()[1];
+  const result = h('div', { class: 'stack' });
+  const csv = h('a', { class: 'btn', href: '#' }, 'Exportera CSV');
+
+  async function run() {
+    try {
+      const s = await get(`/api/subcontractors${qs({ month })}`);
+      csv.href = `/api/subcontractors${qs({ month, format: 'csv' })}`;
+      const t = s.totals;
+      const rows = s.rows.flatMap((p) => [{ group: true, ...p }, ...p.projects.map((x) => ({ ...x, person: p.name }))]);
+      setKids(
+        result,
+        t.pending_hours ? h('div', { class: 'alert warn' }, `${fmtNum(t.pending_hours)} timmar i ${fmtMonth(month)} är inte attesterade och ingår inte. Stäm av mot fakturan när allt är attesterat.`) : null,
+        h('div', { class: 'kpis' }, kpi('Attesterade timmar', `${fmtNum(t.hours)} h`), kpi('Inköp att stämma av', fmtMoney(t.cost)), kpi('Debiterat kund', fmtMoney(t.revenue)), kpi('TB på underkonsulter', fmtMoney(t.margin))),
+        h(
+          'div',
+          { class: 'card flush' },
+          dataTable({
+            rows,
+            empty: `Inga underkonsulter har rapporterat tid i ${fmtMonth(month)}. En person räknas som underkonsult när ersättningsformen är satt till det under Admin → Användare.`,
+            rowClass: (r) => (r.group ? 'group-row' : ''),
+            columns: [
+              { label: 'Underkonsult / projekt', render: (r) => (r.group ? [r.name, h('span', { class: 'muted small' }, ` · inköpspris nu ${fmtMoney(r.current_rate)}/tim`)] : [r.project, h('div', { class: 'small muted' }, r.customer)]) },
+              { label: 'Timmar', num: true, render: (r) => fmtNum(r.hours) },
+              { label: 'Inköp', num: true, render: (r) => (r.group ? h('strong', {}, fmtMoney(r.cost)) : fmtMoney(r.cost)) },
+              { label: 'Debiterat', num: true, render: (r) => fmtMoney(r.revenue) },
+              { label: 'Ej attesterat', num: true, render: (r) => (r.pending_hours ? h('span', { class: 'chip warn' }, `${fmtNum(r.pending_hours)} h`) : '') },
+            ],
+          }),
+        ),
+      );
+    } catch (err) {
+      setKids(result, h('div', { class: 'alert error' }, err.message));
+    }
+  }
+
+  add(
+    root,
+    h('h1', {}, 'Ekonomi'),
+    subnav('underkonsulter'),
+    h('div', { class: 'card' }, h('div', { class: 'filters' }, monthPicker('sub-month', month, (v) => { month = v; run(); }), csv)),
+    result,
+    h('p', { class: 'muted small' }, 'Inköpet är attesterade timmar gånger det inköpspris (timkostnad) som gällde när tiden attesterades. Jämför med underkonsultens faktura per projekt.'),
+  );
+  await run();
 }
 
 const kpi = (label, value, extra) => h('div', { class: 'kpi' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), extra);
@@ -23,7 +163,7 @@ async function overview(root) {
   const waiting = round(t.time_unapproved + t.other_unapproved);
   add(
     root,
-    h('h1', {}, 'Fakturering'),
+    h('h1', {}, 'Ekonomi'),
     subnav('att'),
     h(
       'div',
@@ -405,7 +545,7 @@ async function invoiceHistory(root) {
       }),
     );
   }
-  add(root, h('h1', {}, 'Fakturering'), subnav('underlag'), box);
+  add(root, h('h1', {}, 'Ekonomi'), subnav('underlag'), box);
   await reload();
 }
 
@@ -433,7 +573,7 @@ async function periodLock(root) {
 
   add(
     root,
-    h('h1', {}, 'Fakturering'),
+    h('h1', {}, 'Ekonomi'),
     subnav('lasning'),
     h(
       'div',
@@ -452,5 +592,7 @@ export async function renderBilling(root, params) {
   if (view === 'lasning') return periodLock(root);
   if ((view === 'projekt' || view === 'kund') && Number.isInteger(Number(id))) return workbench(root, view, Number(id));
   if (view === 'underlag') return invoiceHistory(root);
+  if (view === 'lon' && isFinanceSuper()) return payrollView(root);
+  if (view === 'underkonsulter') return subcontractorView(root);
   return overview(root);
 }

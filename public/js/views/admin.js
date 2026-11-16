@@ -90,7 +90,7 @@ async function usersTab(root) {
           },
           { label: 'Timkostnad', num: true, render: (u) => fmtMoney(u.cost_rate) },
           { label: 'Std-pris', num: true, render: (u) => (u.default_bill_rate ? fmtMoney(u.default_bill_rate) : '') },
-          { label: 'Tim/vecka', num: true, render: (u) => fmtNum(u.weekly_hours) },
+          { label: 'Tim/vecka', num: true, render: (u) => [fmtNum(u.weekly_hours), u.pay_type && u.pay_type !== 'monthly' ? h('div', { class: 'small muted' }, u.pay_type === 'hourly' ? 'timlön' : 'underkonsult') : null] },
           { label: '', class: 'actions', render: (u) => (canEditUser(u) ? [actionBtn('Ändra', () => edit(u), '', true), ' ', actionBtn('Lösenord', () => resetPassword(u), '', true)] : null) },
         ],
       }),
@@ -106,7 +106,18 @@ async function usersTab(root) {
       { name: 'category_id', label: 'Kategori', type: 'select', options: optionList(categories, { blank: '(ingen)' }) },
       { name: 'bm_id', label: 'BM / konsultchef (attesterar allt som rapporteras)', type: 'select', options: optionList(users.filter((u) => (u.active || u.id === existing?.bm_id) && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }), hint: 'Har användaren en BM är det bara BM som attesterar tid, utlägg och körningar. Utan BM attesterar projektledaren.' },
       { name: 'manager_id', label: 'Chef (attesterar när BM och projektledare saknas)', type: 'select', options: optionList(users.filter((u) => u.active && u.id !== existing?.id), { blank: '(ingen)', label: personLabel }) },
-      { name: 'weekly_hours', label: 'Arbetstid per vecka (tim)', type: 'number', step: '0.5', min: '0', max: '80' },
+      { name: 'weekly_hours', label: 'Arbetstid per vecka (tim)', type: 'number', step: '0.5', min: '0', max: '80', hint: 'Normtiden. Helgdagar räknas bort automatiskt.' },
+      {
+        name: 'pay_type',
+        label: 'Ersättningsform',
+        type: 'select',
+        options: [
+          { value: 'monthly', label: 'Månadslön' },
+          { value: 'hourly', label: 'Timlön (till exempel studentkonsulter)' },
+          { value: 'subcontractor', label: 'Underkonsult (fakturerar, ingen lön)' },
+        ],
+        hint: 'Styr löneunderlaget. Underkonsulter redovisas i inköpsunderlaget med timkostnaden som inköpspris.',
+      },
       { name: 'cost_rate', label: 'Intern timkostnad (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används för TB. Syns bara för administratörer och ekonomi-superuser.' },
       { name: 'default_bill_rate', label: 'Standard timpris (kr/tim)', type: 'number', step: '1', min: '0', hint: 'Används när varken projekt, aktivitet eller medlem har eget pris.' },
       ...(isAdmin()
@@ -129,7 +140,7 @@ async function usersTab(root) {
     editDialog({
       title: existing ? `Ändra ${existing.name}` : 'Ny användare',
       fields,
-      values: existing ? { ...existing, active: !!existing.active } : { role: 'user', weekly_hours: 40, cost_rate: 0, default_bill_rate: 0, finance: 0 },
+      values: existing ? { ...existing, active: !!existing.active } : { role: 'user', weekly_hours: 40, cost_rate: 0, default_bill_rate: 0, finance: 0, pay_type: 'monthly' },
       onSave: async (v) => {
         const body = { ...v, cost_rate: v.cost_rate ?? 0, default_bill_rate: v.default_bill_rate ?? 0, weekly_hours: v.weekly_hours ?? 40 };
         if (isAdmin()) body.finance = v.finance ?? 0;
@@ -742,6 +753,7 @@ async function absenceTab(root) {
         rowClass: (r) => (r.active ? '' : 'inactive'),
         columns: [
           { label: 'Frånvarotyp', render: (r) => [r.name, r.active ? null : h('span', { class: 'chip' }, ' inaktiv')] },
+          { label: 'Löneart', render: (r) => r.pay_code || h('span', { class: 'muted' }, '–') },
           { label: '', class: 'actions', render: (r) => actionBtn('Ändra', () => edit(r)) },
         ],
       }),
@@ -751,7 +763,11 @@ async function absenceTab(root) {
     editDialog({
       title: existing ? `Ändra ${existing.name}` : 'Ny frånvarotyp',
       values: existing ? { ...existing, active: !!existing.active } : {},
-      fields: [{ name: 'name', label: 'Namn', required: true, maxlength: 60, full: true }, ...(existing ? [{ name: 'active', label: 'Aktiv', type: 'checkbox' }] : [])],
+      fields: [
+        { name: 'name', label: 'Namn', required: true, maxlength: 60, full: true },
+        { name: 'pay_code', label: 'Löneart', maxlength: 20, hint: 'Koden i lönesystemet, används i löneunderlaget. Kan lämnas tom.', full: true },
+        ...(existing ? [{ name: 'active', label: 'Aktiv', type: 'checkbox' }] : []),
+      ],
       onSave: async (v) => {
         if (existing) await patch(`/api/absence-types/${existing.id}`, v);
         else await post('/api/absence-types', v);
@@ -801,6 +817,11 @@ async function settingsTab(root) {
       required: true,
       hint: 'Andel av arbetsdagarna som räknas som arbetade, efter semester och sjukdom. Helgdagarna räknas bort för sig.',
     },
+    { name: 'mileage_taxfree_rate', label: 'Skattefri milersättning (kr/km)', type: 'number', step: '0.01', min: '0', hint: 'Skatteverkets nivå för egen bil (25 kr/mil = 2,50 kr/km). Det som betalas ut över detta blir skattepliktigt i löneunderlaget.' },
+    { name: 'pay_code_hours', label: 'Löneart: arbetade timmar (timlön)', maxlength: 20 },
+    { name: 'pay_code_expenses', label: 'Löneart: utlägg', maxlength: 20 },
+    { name: 'pay_code_mileage_free', label: 'Löneart: skattefri milersättning', maxlength: 20 },
+    { name: 'pay_code_mileage_taxable', label: 'Löneart: skattepliktig milersättning', maxlength: 20, hint: 'Lönearterna för frånvaro sätts per frånvarotyp under Frånvaro.' },
     {
       name: 'holiday_eves_off',
       label: 'Midsommar-, jul- och nyårsafton är lediga',
@@ -824,7 +845,7 @@ async function settingsTab(root) {
         onclick: () =>
           guarded(async () => {
             const v = form.read();
-            state.settings = await patch('/api/settings', { ...v, mileage_rate: v.mileage_rate ?? 0 });
+            state.settings = await patch('/api/settings', { ...v, mileage_rate: v.mileage_rate ?? 0, mileage_taxfree_rate: v.mileage_taxfree_rate ?? 0 });
             toast('Inställningarna är sparade.', 'ok');
           }),
       }, 'Spara') : null,

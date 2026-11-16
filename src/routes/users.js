@@ -6,7 +6,7 @@ import { isAdmin } from '../domain.js';
 import { audit, changesFor } from '../audit.js';
 
 const USER_COLUMNS = `u.id, u.email, u.name, u.role, u.finance, u.category_id, c.name AS category_name, u.manager_id,
-  m.name AS manager_name, u.bm_id, bm.name AS bm_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.active, u.must_change_password`;
+  m.name AS manager_name, u.bm_id, bm.name AS bm_name, u.cost_rate, u.default_bill_rate, u.weekly_hours, u.pay_type, u.active, u.must_change_password`;
 
 const USER_SCHEMA = {
   email: f.email({ required: true, label: 'E-post' }),
@@ -19,6 +19,7 @@ const USER_SCHEMA = {
   cost_rate: f.num({ min: 0, max: 100000, label: 'Timkostnad' }),
   default_bill_rate: f.num({ min: 0, max: 100000, label: 'Standardpris' }),
   weekly_hours: f.num({ min: 0, max: 80, label: 'Arbetstid per vecka' }),
+  pay_type: f.oneOf(['monthly', 'hourly', 'subcontractor'], { label: 'Ersättningsform' }),
   active: f.bool({ label: 'Aktiv' }),
 };
 
@@ -196,13 +197,14 @@ export function registerUsers({ db, router }) {
   // Frånvarotyper
   router.add('GET', '/api/absence-types', {}, ({ user }) =>
     db
-      .prepare(`SELECT id, name, active FROM absence_types ${isAdmin(user) ? '' : 'WHERE active = 1'} ORDER BY name`)
+      .prepare(`SELECT id, name, active, pay_code FROM absence_types ${isAdmin(user) ? '' : 'WHERE active = 1'} ORDER BY name`)
       .all(),
   );
 
   const ABSENCE_SCHEMA = {
     name: f.str({ required: true, max: 60, label: 'Namn' }),
     active: f.bool({ label: 'Aktiv' }),
+    pay_code: f.str({ max: 20, label: 'Löneart' }),
   };
   router.add('POST', '/api/absence-types', { auth: 'admin' }, ({ body, user }) => {
     const data = parse(body, ABSENCE_SCHEMA);

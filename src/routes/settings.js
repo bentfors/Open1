@@ -12,6 +12,11 @@ const SCHEMA = {
   bench_cap_hours: f.num({ nullable: true, min: 0, max: 100000, label: 'Gräns för odebiterbar tid' }),
   forecast_utilization: f.num({ required: true, min: 1, max: 100, label: 'Beläggning i prognoser' }),
   holiday_eves_off: f.bool({ label: 'Aftnar lediga' }),
+  mileage_taxfree_rate: f.num({ min: 0, max: 100, label: 'Skattefri milersättning (kr/km)' }),
+  pay_code_hours: f.str({ max: 20, label: 'Löneart för arbetade timmar' }),
+  pay_code_expenses: f.str({ max: 20, label: 'Löneart för utlägg' }),
+  pay_code_mileage_free: f.str({ max: 20, label: 'Löneart för skattefri milersättning' }),
+  pay_code_mileage_taxable: f.str({ max: 20, label: 'Löneart för skattepliktig milersättning' }),
 };
 
 export function registerSettings({ db, router }) {

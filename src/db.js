@@ -321,6 +321,10 @@ export const MIGRATIONS = [
    CREATE INDEX audit_project ON audit_log(project_id);
    CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_log BEGIN SELECT RAISE(ABORT, 'Ändringsloggen kan inte ändras.'); END;
    CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_log BEGIN SELECT RAISE(ABORT, 'Ändringsloggen kan inte raderas.'); END;`,
+
+  // 8: löneunderlag. Ersättningsform per person och löneart per frånvarotyp, för export till lönesystemet.
+  `ALTER TABLE users ADD COLUMN pay_type TEXT NOT NULL DEFAULT 'monthly' CHECK (pay_type IN ('monthly','hourly','subcontractor'));
+   ALTER TABLE absence_types ADD COLUMN pay_code TEXT NOT NULL DEFAULT '';`,
 ];
 
 export function openDb(file) {

@@ -2,7 +2,8 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildWorld, seedApprovedWeek, entry } from './world.js';
 import { createUser } from './helpers.js';
-import { openDb, migrate } from '../src/db.js';
+import { DatabaseSync } from 'node:sqlite';
+import { MIGRATIONS, migrate } from '../src/db.js';
 
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
 
@@ -249,14 +250,17 @@ describe('ekonomiadministratörer, två nivåer', () => {
   });
 
   test('migrering: den som hade ekonomibehörighet blir superuser, ingen tappar något', () => {
-    const db = openDb(':memory:');
+    // En databas som den såg ut före ekonominivåerna: de fem första migreringarna, med ekonomiflaggan som 0 eller 1.
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    for (const step of MIGRATIONS.slice(0, 5)) typeof step === 'function' ? step(db) : db.exec(step);
+    db.exec('PRAGMA user_version = 5');
     db.exec(`INSERT INTO users (email, name, password_hash, finance) VALUES ('a@t.se','Gammal ekonomi','x',1), ('b@t.se','Vanlig','x',0)`);
-    db.exec('DROP TABLE audit_log'); // och utan ändringslogg
-    db.exec('PRAGMA user_version = 5'); // som en databas före nivåerna
     migrate(db);
-    const rows = db.prepare('SELECT name, finance FROM users ORDER BY id').all();
-    assert.deepEqual(rows.map((r) => [r.name, r.finance]), [['Gammal ekonomi', 2], ['Vanlig', 0]]);
+    const rows = db.prepare('SELECT name, finance, pay_type FROM users ORDER BY id').all();
+    assert.deepEqual(rows.map((r) => [r.name, r.finance, r.pay_type]), [['Gammal ekonomi', 2, 'monthly'], ['Vanlig', 0, 'monthly']], 'alla får månadslön som ersättningsform');
     assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'audit_log'").get(), 'migreringen skapar ändringsloggen');
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
     db.close();
   });
 });

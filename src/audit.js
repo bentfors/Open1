@@ -88,6 +88,13 @@ const FIELD_LABELS = {
   bench_cap_hours: 'Gräns för odebiterbar tid (tim)',
   forecast_utilization: 'Beläggning i prognoser (%)',
   holiday_eves_off: 'Midsommar-, jul- och nyårsafton lediga',
+  pay_type: 'Ersättningsform',
+  pay_code: 'Löneart',
+  mileage_taxfree_rate: 'Skattefri milersättning (kr/km)',
+  pay_code_hours: 'Löneart, arbetade timmar',
+  pay_code_expenses: 'Löneart, utlägg',
+  pay_code_mileage_free: 'Löneart, skattefri milersättning',
+  pay_code_mileage_taxable: 'Löneart, skattepliktig milersättning',
   minutes: 'Minuter',
   note: 'Anteckning',
   date: 'Datum',
@@ -127,6 +134,9 @@ const VALUE_LABELS = {
   probation: 'Provanställning',
   worked: 'All projekttid',
   billable: 'Bara debiterbar tid',
+  monthly: 'Månadslön',
+  hourly: 'Timlön',
+  subcontractor: 'Underkonsult',
 };
 
 const USER_FIELDS = new Set(['bm_id', 'manager_id', 'earner_id', 'user_id']);
