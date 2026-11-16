@@ -30,6 +30,8 @@ const publicUser = (db, u) => ({
   has_stats:
     !!db.prepare('SELECT 1 FROM commission_rules WHERE earner_id = ? LIMIT 1').get(u.id) ||
     !!db.prepare('SELECT 1 FROM users WHERE bm_id = ? AND active = 1 LIMIT 1').get(u.id),
+  // Har personer att följa upp (som BM eller chef): styr flikarna Inrapportering och Debiteringsgrad.
+  oversees: !!db.prepare('SELECT 1 FROM users WHERE (bm_id = ? OR manager_id = ?) AND id <> ? AND active = 1 LIMIT 1').get(u.id, u.id, u.id),
 });
 
 export function registerAuth({ db, router }) {

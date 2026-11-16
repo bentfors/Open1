@@ -5,6 +5,7 @@ import { toCsv } from '../csv.js';
 import { computeCommissions, summarizeEarners } from '../commission.js';
 import { ITEMS_CTE } from '../billing.js';
 import { today, addDays } from '../dates.js';
+import { submissionStatus, utilization, UTILIZATION_GROUPS } from '../oversight.js';
 
 const GROUPS = {
   customer: { key: 'c.id', label: 'c.name', title: 'Kund' },
@@ -293,17 +294,47 @@ export function registerReports({ db, router }) {
     return { from, to, as_of: asOf, group_by: groupBy, group_title: g.title, rows, total };
   });
 
-  // Saldo: rapporterad tid mot normtid per vecka, för inloggad användare.
-  router.add('GET', '/api/reports/balance', {}, ({ user, query }) => {
+  /**
+   * Inrapportering: vem som har rapporterat och skickat in vecka för vecka. BM ser sina konsulter,
+   * chefer sina underställda, ekonomi och administratörer alla.
+   */
+  router.add('GET', '/api/reports/submission', {}, ({ user, query }) => {
+    const weeks = query.weeks === undefined || query.weeks === '' ? 6 : Number(query.weeks);
+    if (!Number.isInteger(weeks) || weeks < 1 || weeks > 26) throw bad('Antal veckor måste vara mellan 1 och 26.');
+    return submissionStatus(db, user, { to: optDate(query.to, 'Till') ?? today(), weeks });
+  });
+
+  // Debiteringsgrad: debiterbar tid av tillgänglig tid (normtid minus frånvaro), med samma synlighet som inrapporteringen.
+  router.add('GET', '/api/reports/utilization', {}, ({ user, query, res }) => {
     const { from, to } = period(query);
-    const rows = db
-      .prepare(
-        `SELECT te.work_date AS date, SUM(te.minutes) AS minutes,
-                SUM(CASE WHEN te.absence_type_id IS NOT NULL THEN te.minutes ELSE 0 END) AS absence_minutes
-         FROM time_entries te WHERE te.user_id = ? AND te.work_date BETWEEN ? AND ?
-         GROUP BY te.work_date ORDER BY te.work_date`,
-      )
-      .all(user.id, from, to);
-    return { weekly_hours: user.weekly_hours, days: rows };
+    if (to > addDays(from, 366 * 2)) throw bad('Välj högst två år åt gången.');
+    const groupBy = Object.hasOwn(UTILIZATION_GROUPS, query.group_by) ? query.group_by : 'person';
+    const data = utilization(db, user, {
+      from,
+      to,
+      groupBy,
+      approvedOnly: query.status === 'approved',
+      consultantsOnly: query.everyone !== '1',
+      categoryId: optId(query.category_id, 'Kategori') ?? null,
+      bmId: optId(query.bm_id, 'BM') ?? null,
+    });
+    if (query.format === 'csv') {
+      const money = isFinance(user);
+      const columns = [
+        { key: 'label', label: data.group_title },
+        ...(groupBy === 'person' ? [{ key: 'category', label: 'Kategori' }, { key: 'bm_name', label: 'BM' }] : [{ key: 'people', label: 'Personer' }]),
+        { key: 'norm_hours', label: 'Normtid' },
+        { key: 'absence_hours', label: 'Frånvaro' },
+        { key: 'available_hours', label: 'Tillgänglig tid' },
+        { key: 'worked_hours', label: 'Projekttid' },
+        { key: 'billable_hours', label: 'Debiterbart' },
+        { key: 'internal_hours', label: 'Ej debiterbart' },
+        { key: 'utilization', label: 'Debiteringsgrad %' },
+        { key: 'of_norm', label: 'Debiterbart av normtid %' },
+        ...(money ? [{ key: 'revenue', label: 'Intäkt' }, { key: 'avg_rate', label: 'Snittpris' }] : []),
+      ];
+      return sendCsv(res, `debiteringsgrad-${from}-${to}.csv`, columns, [...data.rows, { ...data.total, label: 'Totalt' }]);
+    }
+    return data;
   });
 }

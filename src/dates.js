@@ -100,3 +100,12 @@ export function addMonths(dateStr, n) {
 export function daysBetween(a, b) {
   return Math.round((toUtc(b) - toUtc(a)) / 86400000);
 }
+
+// ISO-veckonummer (veckan med årets första torsdag är vecka 1).
+export function isoWeek(dateStr) {
+  const d = toUtc(dateStr);
+  const day = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - day + 3);
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  return 1 + Math.round(((d - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+}

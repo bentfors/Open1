@@ -368,10 +368,173 @@ async function accruedReport(root) {
   await run();
 }
 
+// ── Inrapportering ──────────────────────────────────────────────────────
+const SUBMISSION = {
+  missing: ['Saknas', 'rejected'],
+  draft: ['Ej inskickad', 'warn'],
+  rejected: ['Avslagen', 'rejected'],
+  submitted: ['Väntar på attest', 'submitted'],
+  approved: ['Attesterad', 'approved'],
+  off: ['–', ''],
+};
+
+async function submissionReport(root) {
+  const filter = { weeks: 6, actionOnly: false, bm: '' };
+  const result = h('div', { class: 'stack' });
+
+  async function run(preloaded) {
+    try {
+      const data = preloaded ?? (await get(`/api/reports/submission${qs({ weeks: filter.weeks })}`));
+      const needsAction = (p) => p.weeks.some((c, i) => !data.weeks[i].current && ['missing', 'draft', 'rejected', 'submitted'].includes(c.status));
+      const people = data.people.filter((p) => (!filter.actionOnly || needsAction(p)) && (!filter.bm || String(p.bm_id ?? '') === filter.bm));
+      const c = data.counts;
+      const cellOf = (cell, week) => {
+        if (week.future) return h('span', { class: 'muted' }, '');
+        // Innevarande vecka är inte försenad: den skickas in när den är slut.
+        const [label, cls] = week.current && cell.status === 'missing' ? ['Ej påbörjad', ''] : SUBMISSION[cell.status];
+        const chip = h('span', { class: `chip ${cls}` }, label);
+        const amount = cell.status === 'off' ? '' : `${fmtNum(cell.reported_hours)} av ${fmtNum(cell.norm_hours)} h`;
+        return [cell.status === 'submitted' ? h('a', { href: '#/attest' }, chip) : chip, amount ? h('div', { class: 'small muted' }, amount) : null];
+      };
+      setKids(
+        result,
+        h(
+          'div',
+          { class: 'kpis' },
+          h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Saknas helt'), h('div', { class: 'value' }, String(c.missing)), h('div', { class: 'small muted' }, 'veckor utan rapporterad tid')),
+          h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Ej inskickade'), h('div', { class: 'value' }, String(c.draft + c.rejected)), h('div', { class: 'small muted' }, c.rejected ? `varav ${c.rejected} avslagna att rätta` : 'utkast kvar')),
+          h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Väntar på attest'), h('div', { class: 'value' }, String(c.submitted)), h('div', { class: 'small muted' }, 'veckor att attestera')),
+        ),
+        h(
+          'div',
+          { class: 'card flush' },
+          dataTable({
+            rows: people,
+            empty: filter.actionOnly ? 'Ingen behöver göra något just nu.' : 'Inga personer att följa upp.',
+            columns: [
+              { label: 'Person', render: (p) => [p.name, h('div', { class: 'small muted' }, [p.category, p.bm_name ? `BM ${p.bm_name}` : null].filter(Boolean).join(' · '))] },
+              ...data.weeks.map((week, i) => ({
+                label: `v. ${week.week}${week.current ? ' (pågår)' : ''}`,
+                class: 'nowrap',
+                render: (p) => cellOf(p.weeks[i], week),
+              })),
+            ],
+          }),
+        ),
+      );
+    } catch (err) {
+      setKids(result, h('div', { class: 'alert error' }, err.message));
+    }
+  }
+
+  const first = await get(`/api/reports/submission${qs({ weeks: filter.weeks })}`);
+  // BM-listan behövs bara för den som ser flera BM:s konsulter.
+  const uniqueBms = [...new Map(first.people.filter((p) => p.bm_id).map((p) => [p.bm_id, { value: p.bm_id, label: p.bm_name }])).values()].sort((a, b) => a.label.localeCompare(b.label, 'sv'));
+  const actionOnly = h('input', { id: 's-action', type: 'checkbox', onchange: (e) => { filter.actionOnly = e.target.checked; run(); } });
+  add(
+    root,
+    h(
+      'div',
+      { class: 'card' },
+      h(
+        'div',
+        { class: 'filters' },
+        select('s-weeks', 'Veckor bakåt', [4, 6, 8, 12].map((n) => ({ value: n, label: `${n} veckor` })), filter.weeks, (v) => { filter.weeks = Number(v); run(); }),
+        uniqueBms.length > 1 ? select('s-bm', 'BM', [{ value: '', label: 'Alla' }, ...uniqueBms], '', (v) => { filter.bm = v; run(); }) : null,
+        h('div', { class: 'field check' }, h('label', { for: 's-action' }, actionOnly, 'Bara de som behöver göra något')),
+      ),
+    ),
+    result,
+    h('p', { class: 'muted small' }, 'Normtiden räknar bort helgdagar och dagar utanför anställningen. Med i listan är de som har en BM, ett anställningsavtal eller har rapporterat tid det senaste halvåret. Innevarande vecka räknas inte som försenad.'),
+  );
+  await run(first);
+}
+
+// ── Debiteringsgrad ─────────────────────────────────────────────────────
+function meter(pct) {
+  const fill = h('span');
+  fill.style.width = `${Math.max(0, Math.min(100, pct ?? 0))}%`;
+  return h('span', { class: 'meter', 'aria-hidden': 'true' }, fill);
+}
+const pctText = (v) => (v === null || v === undefined ? '–' : `${fmtNum(v, 1)} %`);
+
+async function utilizationReport(root) {
+  const money = isFinance();
+  const filter = { ...monthRange(-1), group_by: 'person', status: '', everyone: '' };
+  const result = h('div', { class: 'stack' });
+
+  async function run() {
+    try {
+      const data = await get(`/api/reports/utilization${qs(filter)}`);
+      const t = data.total;
+      const isPerson = data.group_by === 'person';
+      const columns = [
+        { label: data.group_title, render: (r) => [r.label, isPerson ? h('div', { class: 'small muted' }, [r.category, r.bm_name ? `BM ${r.bm_name}` : null].filter(Boolean).join(' · ')) : h('div', { class: 'small muted' }, `${r.people} ${r.people === 1 ? 'person' : 'personer'}`)] },
+        { label: 'Normtid', num: true, render: (r) => fmtNum(r.norm_hours) },
+        { label: 'Frånvaro', num: true, render: (r) => (r.absence_hours ? fmtNum(r.absence_hours) : '') },
+        { label: 'Tillgänglig', num: true, render: (r) => fmtNum(r.available_hours) },
+        { label: 'Debiterbart', num: true, render: (r) => fmtNum(r.billable_hours) },
+        { label: 'Ej debiterbart', num: true, render: (r) => (r.internal_hours ? fmtNum(r.internal_hours) : '') },
+        { label: 'Debiteringsgrad', num: true, class: 'nowrap', render: (r) => [meter(r.utilization), ' ', h('strong', {}, pctText(r.utilization))] },
+        { label: 'Av normtid', num: true, render: (r) => pctText(r.of_norm) },
+        ...(money ? [{ label: 'Intäkt', num: true, render: (r) => fmtMoney(r.revenue) }, { label: 'Snittpris', num: true, render: (r) => (r.avg_rate ? fmtMoney(r.avg_rate) : '') }] : []),
+      ];
+      setKids(
+        result,
+        h(
+          'div',
+          { class: 'kpis' },
+          h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Debiteringsgrad'), h('div', { class: 'value' }, pctText(t.utilization)), h('div', { class: 'small muted' }, 'debiterbart av tillgänglig tid')),
+          h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Debiterbart'), h('div', { class: 'value' }, `${fmtNum(t.billable_hours)} h`), h('div', { class: 'small muted' }, `av ${fmtNum(t.available_hours)} h tillgängligt`)),
+          h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Frånvaro'), h('div', { class: 'value' }, `${fmtNum(t.absence_hours)} h`), h('div', { class: 'small muted' }, `normtid ${fmtNum(t.norm_hours)} h`)),
+          money ? h('div', { class: 'kpi' }, h('div', { class: 'label' }, 'Snittpris'), h('div', { class: 'value' }, t.avg_rate ? fmtMoney(t.avg_rate) : '–'), h('div', { class: 'small muted' }, 'per debiterbar timme')) : null,
+        ),
+        h(
+          'div',
+          { class: 'card flush' },
+          dataTable({
+            rows: data.rows,
+            empty: 'Ingen tid eller normtid för urvalet.',
+            columns,
+            footer: (col, i) => ['Totalt', fmtNum(t.norm_hours), fmtNum(t.absence_hours), fmtNum(t.available_hours), fmtNum(t.billable_hours), fmtNum(t.internal_hours), pctText(t.utilization), pctText(t.of_norm), ...(money ? [fmtMoney(t.revenue), t.avg_rate ? fmtMoney(t.avg_rate) : ''] : [])][i],
+          }),
+        ),
+      );
+    } catch (err) {
+      setKids(result, h('div', { class: 'alert error' }, err.message));
+    }
+  }
+
+  const csv = h('a', { class: 'btn', href: '#', onclick: (e) => { e.currentTarget.href = `/api/reports/utilization${qs({ ...filter, format: 'csv' })}`; } }, 'Exportera CSV');
+  const everyone = h('input', { id: 'u-everyone', type: 'checkbox', onchange: (e) => { filter.everyone = e.target.checked ? '1' : ''; run(); } });
+  add(
+    root,
+    h(
+      'div',
+      { class: 'card' },
+      h(
+        'div',
+        { class: 'filters' },
+        ...periodFields(filter, run, [['Detta kvartal', quarterRange(0)], ['I år', { from: `${new Date().getFullYear()}-01-01`, to: `${new Date().getFullYear()}-12-31` }]]),
+        select('u-group', 'Gruppera på', [{ value: 'person', label: 'Person' }, { value: 'bm', label: 'BM' }, { value: 'category', label: 'Kategori' }, { value: 'month', label: 'Månad' }], filter.group_by, (v) => { filter.group_by = v; run(); }),
+        select('u-status', 'Tid', [{ value: '', label: 'All rapporterad' }, { value: 'approved', label: 'Bara attesterad' }], '', (v) => { filter.status = v; run(); }),
+        money ? h('div', { class: 'field check' }, h('label', { for: 'u-everyone' }, everyone, 'Alla, inte bara konsulter')) : null,
+        h('button', { class: 'btn primary', type: 'button', onclick: run }, 'Visa'),
+        csv,
+      ),
+    ),
+    result,
+    h('p', { class: 'muted small' }, 'Debiteringsgrad = debiterbar tid / tillgänglig tid, där tillgänglig tid är normtiden minus frånvaro. Normtiden räknar bort helgdagar och dagar utanför anställningen. Som konsult räknas den som har en BM, ett uppdrag i perioden eller debiterbar tid. Avslagen tid räknas inte.'),
+  );
+  await run();
+}
+
 export async function renderReports(root, params) {
   const earner = state.user.is_earner;
   const tabs = [
     ['tid', 'Tidrapport', true],
+    ['inrapportering', 'Inrapportering', isFinance() || state.user.oversees],
+    ['debitering', isFinance() || state.user.oversees ? 'Debiteringsgrad' : 'Min debiteringsgrad', true],
     ['provision', isFinanceSuper() ? 'TB och provision' : 'Min provision', isFinanceSuper() || earner],
     ['upplupet', 'Upplupet', isFinance()],
   ].filter((t) => t[2]);
@@ -382,5 +545,5 @@ export async function renderReports(root, params) {
   );
   const body = h('div', { class: 'stack' });
   add(root, body);
-  await { tid: timeReport, provision: marginReport, upplupet: accruedReport }[active](body);
+  await { tid: timeReport, inrapportering: submissionReport, debitering: utilizationReport, provision: marginReport, upplupet: accruedReport }[active](body);
 }
