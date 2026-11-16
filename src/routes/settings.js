@@ -17,6 +17,8 @@ const SCHEMA = {
   pay_code_expenses: f.str({ max: 20, label: 'Löneart för utlägg' }),
   pay_code_mileage_free: f.str({ max: 20, label: 'Löneart för skattefri milersättning' }),
   pay_code_mileage_taxable: f.str({ max: 20, label: 'Löneart för skattepliktig milersättning' }),
+  article_no_expense: f.str({ max: 30, label: 'Artikelnummer för utlägg' }),
+  article_no_mileage: f.str({ max: 30, label: 'Artikelnummer för körning' }),
 };
 
 export function registerSettings({ db, router }) {

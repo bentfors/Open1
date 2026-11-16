@@ -9,6 +9,7 @@ function subnav(active) {
     'div',
     { class: 'subnav' },
     h('a', { href: '#/fakturering', 'aria-current': active === 'att' ? 'page' : null }, 'Att fakturera'),
+    h('a', { href: '#/fakturering/manad', 'aria-current': active === 'manad' ? 'page' : null }, 'Månadsfakturering'),
     h('a', { href: '#/fakturering/underlag', 'aria-current': active === 'underlag' ? 'page' : null }, 'Skapade underlag'),
     isFinanceSuper() ? h('a', { href: '#/fakturering/lon', 'aria-current': active === 'lon' ? 'page' : null }, 'Löneunderlag') : null,
     h('a', { href: '#/fakturering/underkonsulter', 'aria-current': active === 'underkonsulter' ? 'page' : null }, 'Underkonsulter'),
@@ -31,6 +32,116 @@ function monthPicker(id, value, onchange) {
 }
 
 const PAY_TYPE = { monthly: 'Månadslön', hourly: 'Timlön', subcontractor: 'Underkonsult' };
+
+// ── Månadsfakturering ──────────────────────────────────────────────────
+async function monthlyView(root) {
+  let month = monthChoices()[1];
+  let includeOlder = true;
+  const selected = new Set();
+  const result = h('div', { class: 'stack' });
+  const created = h('div');
+  const dateInput = h('input', { id: 'm-date', type: 'date', value: localToday() });
+  let data = null;
+
+  async function load() {
+    try {
+      data = await get(`/api/billing/month${qs({ month, include_older: includeOlder ? '' : '0' })}`);
+      selected.clear();
+      for (const r of data.rows) if (r.ready > 0) selected.add(r.customer_id);
+      draw();
+    } catch (err) {
+      setKids(result, h('div', { class: 'alert error' }, err.message));
+    }
+  }
+
+  function draw() {
+    const t = data.totals;
+    const chosen = data.rows.filter((r) => selected.has(r.customer_id));
+    const sum = round(chosen.reduce((s, r) => s + r.ready, 0));
+    const toggle = (r) => h('input', { type: 'checkbox', 'aria-label': `Fakturera ${r.customer_name}`, checked: selected.has(r.customer_id), disabled: !r.ready, onchange: (e) => { if (e.target.checked) selected.add(r.customer_id); else selected.delete(r.customer_id); draw(); } });
+    const createBtn = h('button', { class: 'btn primary', type: 'button', disabled: !chosen.length, onclick: () => createAll(chosen, sum) }, chosen.length ? `Skapa ${chosen.length} underlag (${fmtMoney(sum)})` : 'Välj kunder');
+    setKids(
+      result,
+      t.waiting || t.draft_hours
+        ? h(
+            'div',
+            { class: 'alert warn' },
+            `I ${fmtMonth(month)} finns ${t.waiting ? `${fmtMoney(t.waiting)} som väntar på attest` : ''}${t.waiting && t.draft_hours ? ' och ' : ''}${t.draft_hours ? `${fmtNum(t.draft_hours)} debiterbara timmar som inte är inskickade` : ''}. Det kommer inte med nu men ligger kvar till nästa gång. `,
+            h('a', { href: '#/rapporter/inrapportering' }, 'Se inrapporteringen'),
+            '.',
+          )
+        : h('div', { class: 'alert ok' }, `All debiterbar tid i ${fmtMonth(month)} är attesterad.`),
+      h(
+        'div',
+        { class: 'kpis' },
+        kpi('Att fakturera', fmtMoney(t.ready), t.older ? h('div', { class: 'small muted' }, `varav ${fmtMoney(t.older)} från tidigare månader`) : null),
+        kpi('Kunder', String(t.customers)),
+        kpi('Väntar på attest', fmtMoney(t.waiting)),
+        kpi('Fastpris, timmar', fmtNum(t.fixed_hours), h('div', { class: 'small muted' }, 'faktureras separat')),
+      ),
+      h(
+        'div',
+        { class: 'card flush' },
+        dataTable({
+          rows: data.rows,
+          empty: `Inget att fakturera för ${fmtMonth(month)}.`,
+          columns: [
+            { label: '', class: 'check', render: toggle },
+            { label: 'Kund', render: (r) => [h('a', { href: `#/fakturering/kund/${r.customer_id}` }, r.customer_name), r.ext_no ? h('div', { class: 'small muted' }, `kundnr ${r.ext_no}`) : null] },
+            { label: 'Projekt', num: true, render: (r) => r.projects || '' },
+            { label: 'Att fakturera', num: true, render: (r) => (r.ready ? h('strong', {}, fmtMoney(r.ready)) : '') },
+            { label: 'Varav äldre', num: true, render: (r) => (r.older ? fmtMoney(r.older) : '') },
+            { label: 'Väntar på attest', num: true, render: (r) => (r.waiting ? h('span', { class: 'chip submitted' }, fmtMoney(r.waiting)) : '') },
+            { label: 'Ej inskickat', num: true, render: (r) => (r.draft_hours ? h('span', { class: 'chip warn' }, `${fmtNum(r.draft_hours)} h`) : '') },
+            { label: 'Fastpris', num: true, render: (r) => (r.fixed_hours ? `${fmtNum(r.fixed_hours)} h` : '') },
+          ],
+          footer: (c, i) => ['', 'Valt', '', fmtMoney(sum), '', '', '', ''][i],
+        }),
+        h('div', { class: 'sticky-actions' }, h('div', { class: 'field' }, h('label', { for: 'm-date' }, 'Fakturadatum'), dateInput), h('span', { class: 'spacer' }), createBtn),
+      ),
+    );
+  }
+
+  async function createAll(chosen, sum) {
+    if (!(await confirmDialog(`Skapa ${chosen.length} fakturaunderlag på totalt ${fmtMoney(sum)} för ${fmtMonth(month)}? Varje kund får ett underlag med allt som är godkänt.`, { confirmLabel: 'Skapa underlag' }))) return;
+    try {
+      const r = await post('/api/billing/month', { month, invoice_date: dateInput.value || undefined, include_older: includeOlder, customer_ids: chosen.map((c) => c.customer_id) });
+      toast(`${r.created.length} underlag skapade, ${fmtMoney(r.total)}.`, 'ok');
+      setKids(
+        created,
+        h(
+          'div',
+          { class: 'card flush' },
+          h('div', { class: 'group-head' }, `Skapade ${fmtDate(localToday())}`),
+          dataTable({
+            rows: r.created,
+            columns: [
+              { label: 'Kund', render: (c) => c.customer_name },
+              { label: 'Nummer', render: (c) => c.number },
+              { label: 'Belopp', num: true, render: (c) => fmtMoney(c.total) },
+              { label: '', class: 'actions', render: (c) => h('a', { class: 'btn sm', href: `/api/invoices/${c.id}?format=csv` }, 'CSV') },
+            ],
+          }),
+        ),
+      );
+      await load();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  const older = h('input', { id: 'm-older', type: 'checkbox', checked: true, onchange: (e) => { includeOlder = e.target.checked; load(); } });
+  add(
+    root,
+    h('h1', {}, 'Ekonomi'),
+    subnav('manad'),
+    h('div', { class: 'card' }, h('div', { class: 'filters' }, monthPicker('m-month', month, (v) => { month = v; load(); }), h('div', { class: 'field check' }, h('label', { for: 'm-older' }, older, 'Ta med ofakturerat från tidigare månader')))),
+    created,
+    result,
+    h('p', { class: 'muted small' }, 'Ett underlag per kund med allt godkänt och debiterbart på löpande räkning till och med månadens slut. Det som väntar på attest eller inte är inskickat ligger kvar till nästa gång. Fastprisprojekt faktureras separat. Vill du välja rad för rad, öppna kunden.'),
+  );
+  await load();
+}
 
 // ── Löneunderlag ───────────────────────────────────────────────────────
 async function payrollView(root) {
@@ -592,6 +703,7 @@ export async function renderBilling(root, params) {
   if (view === 'lasning') return periodLock(root);
   if ((view === 'projekt' || view === 'kund') && Number.isInteger(Number(id))) return workbench(root, view, Number(id));
   if (view === 'underlag') return invoiceHistory(root);
+  if (view === 'manad') return monthlyView(root);
   if (view === 'lon' && isFinanceSuper()) return payrollView(root);
   if (view === 'underkonsulter') return subcontractorView(root);
   return overview(root);

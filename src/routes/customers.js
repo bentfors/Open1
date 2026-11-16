@@ -5,6 +5,7 @@ import { audit, changesFor } from '../audit.js';
 
 const CUSTOMER_SCHEMA = {
   name: f.str({ required: true, max: 120, label: 'Kundnamn' }),
+  ext_no: f.str({ max: 30, label: 'Kundnummer i ekonomisystemet' }),
   org_no: f.str({ max: 30, label: 'Organisationsnummer' }),
   contact_name: f.str({ max: 100, label: 'Kontaktperson' }),
   email: f.str({ max: 200, label: 'E-post' }),

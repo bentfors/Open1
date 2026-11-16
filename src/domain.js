@@ -15,6 +15,9 @@ export const SETTING_DEFAULTS = {
   pay_code_expenses: '',
   pay_code_mileage_free: '',
   pay_code_mileage_taxable: '',
+  // Artikelnummer i ekonomisystemet för vidarefakturerade utlägg och körningar. Tid får sitt från aktiviteten.
+  article_no_expense: '',
+  article_no_mileage: '',
 };
 
 export function getSettings(db) {

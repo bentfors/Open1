@@ -325,6 +325,10 @@ export const MIGRATIONS = [
   // 8: löneunderlag. Ersättningsform per person och löneart per frånvarotyp, för export till lönesystemet.
   `ALTER TABLE users ADD COLUMN pay_type TEXT NOT NULL DEFAULT 'monthly' CHECK (pay_type IN ('monthly','hourly','subcontractor'));
    ALTER TABLE absence_types ADD COLUMN pay_code TEXT NOT NULL DEFAULT '';`,
+
+  // 9: ekonomisystem. Kundnummer och artikelnummer som i bokföringen (till exempel Fortnox), så att underlagen kan föras över.
+  `ALTER TABLE customers ADD COLUMN ext_no TEXT NOT NULL DEFAULT '';
+   ALTER TABLE activities ADD COLUMN article_no TEXT NOT NULL DEFAULT '';`,
 ];
 
 export function openDb(file) {

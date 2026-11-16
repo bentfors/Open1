@@ -24,6 +24,7 @@ const ACTIVITY_SCHEMA = {
   name: f.str({ required: true, max: 80, label: 'Aktivitet' }),
   billable: f.bool({ label: 'Debiterbar' }),
   hourly_rate: f.num({ nullable: true, min: 0, max: 100000, label: 'Timpris' }),
+  article_no: f.str({ max: 30, label: 'Artikelnummer' }),
   active: f.bool({ label: 'Aktiv' }),
 };
 
@@ -75,7 +76,7 @@ export function registerProjects({ db, router }) {
       )
       .all(id);
     project.activities = db
-      .prepare('SELECT id, name, billable, hourly_rate, active FROM activities WHERE project_id = ? ORDER BY name')
+      .prepare('SELECT id, name, billable, hourly_rate, article_no, active FROM activities WHERE project_id = ? ORDER BY name')
       .all(id);
     return project;
   });

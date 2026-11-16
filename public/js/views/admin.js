@@ -180,7 +180,7 @@ async function customersTab(root) {
         rowClass: (c) => (c.active ? '' : 'inactive'),
         columns: [
           { label: 'Kund', render: (c) => [c.name, c.active ? null : h('span', { class: 'chip' }, ' inaktiv')] },
-          { label: 'Org.nr', render: (c) => c.org_no },
+          { label: 'Org.nr', render: (c) => [c.org_no, c.ext_no ? h('div', { class: 'small muted' }, `kundnr ${c.ext_no}`) : null] },
           { label: 'Kontakt', render: (c) => [c.contact_name, c.email ? h('div', { class: 'small muted' }, c.email) : null] },
           { label: 'Projekt', num: true, render: (c) => c.projects },
           {
@@ -214,6 +214,7 @@ async function customersTab(root) {
       fields: [
         { name: 'name', label: 'Kundnamn', required: true, maxlength: 120, full: true },
         { name: 'org_no', label: 'Organisationsnummer', maxlength: 30 },
+        { name: 'ext_no', label: 'Kundnummer i ekonomisystemet', maxlength: 30, hint: 'Samma nummer som i bokföringen (till exempel Fortnox). Följer med på fakturaunderlagen.' },
         { name: 'contact_name', label: 'Kontaktperson', maxlength: 100 },
         { name: 'email', label: 'E-post', maxlength: 200 },
         { name: 'phone', label: 'Telefon', maxlength: 50 },
@@ -374,6 +375,7 @@ async function projectsTab(root) {
             { name: 'billable', label: 'Debiterbar', type: 'checkbox' },
             ...(existing ? [{ name: 'active', label: 'Aktiv', type: 'checkbox' }] : []),
             { name: 'hourly_rate', label: 'Eget timpris (kr/tim)', type: 'number', step: '1', min: '0', full: true },
+            { name: 'article_no', label: 'Artikelnummer i ekonomisystemet', maxlength: 30, hint: 'Följer med på fakturaunderlagets rader.', full: true },
           ],
           onSave: async (v) => {
             if (existing) await patch(`/api/activities/${existing.id}`, v);
@@ -817,6 +819,8 @@ async function settingsTab(root) {
       required: true,
       hint: 'Andel av arbetsdagarna som räknas som arbetade, efter semester och sjukdom. Helgdagarna räknas bort för sig.',
     },
+    { name: 'article_no_expense', label: 'Artikelnummer: vidarefakturerade utlägg', maxlength: 30 },
+    { name: 'article_no_mileage', label: 'Artikelnummer: vidarefakturerade körningar', maxlength: 30, hint: 'Tid får sitt artikelnummer från aktiviteten (Projekt → Team & aktiviteter).' },
     { name: 'mileage_taxfree_rate', label: 'Skattefri milersättning (kr/km)', type: 'number', step: '0.01', min: '0', hint: 'Skatteverkets nivå för egen bil (25 kr/mil = 2,50 kr/km). Det som betalas ut över detta blir skattepliktigt i löneunderlaget.' },
     { name: 'pay_code_hours', label: 'Löneart: arbetade timmar (timlön)', maxlength: 20 },
     { name: 'pay_code_expenses', label: 'Löneart: utlägg', maxlength: 20 },

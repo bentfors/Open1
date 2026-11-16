@@ -1,8 +1,8 @@
 import { HANDLED, bad, conflict, notFound, sendText } from '../http.js';
 import { f, parse, reqId, optId, optDate } from '../validate.js';
 import { tx } from '../db.js';
-import { today } from '../dates.js';
-import { round2 } from '../domain.js';
+import { monthEnd, previousMonthEnd, today } from '../dates.js';
+import { getSettings, round2 } from '../domain.js';
 import { toCsv } from '../csv.js';
 import { ITEMS_CTE, INVOICE_NUMBER_SQL, TABLES, classify } from '../billing.js';
 import { audit } from '../audit.js';
@@ -203,10 +203,12 @@ export function registerBilling({ db, router }) {
   });
 
   // ── Fakturaunderlag ───────────────────────────────────────────────────
+  // Raderna på ett underlag, med artikel- och projektnummer så att de kan föras över till ekonomisystemet.
   function buildLines(invoiceId) {
+    const settings = getSettings(db);
     const time = db
       .prepare(
-        `SELECT p.code AS project_code, p.name AS project_name, a.name AS activity_name, u.name AS user_name,
+        `SELECT p.code AS project_code, p.name AS project_name, a.name AS activity_name, a.article_no, u.name AS user_name,
                 te.bill_rate AS rate, SUM(te.minutes) AS minutes
          FROM time_entries te
          JOIN users u ON u.id = te.user_id
@@ -219,6 +221,8 @@ export function registerBilling({ db, router }) {
       .all(invoiceId)
       .map((r) => ({
         kind: 'Tid',
+        article_no: r.article_no,
+        project_code: r.project_code,
         project: `${r.project_code} ${r.project_name}`,
         description: `${r.activity_name} – ${r.user_name}`,
         quantity: round2(r.minutes / 60),
@@ -235,6 +239,8 @@ export function registerBilling({ db, router }) {
       .all(invoiceId)
       .map((r) => ({
         kind: 'Utlägg',
+        article_no: settings.article_no_expense,
+        project_code: r.project_code,
         project: `${r.project_code} ${r.project_name}`,
         description: `${r.date} ${r.description} (${r.user_name})`,
         quantity: 1,
@@ -251,6 +257,8 @@ export function registerBilling({ db, router }) {
       .all(invoiceId)
       .map((r) => ({
         kind: 'Körning',
+        article_no: settings.article_no_mileage,
+        project_code: r.project_code,
         project: `${r.project_code} ${r.project_name}`,
         description: `Bilersättning – ${r.user_name}`,
         quantity: round2(r.km),
@@ -276,6 +284,38 @@ export function registerBilling({ db, router }) {
                 AND m.invoice_id IS NULL AND m.waived_at IS NULL`,
   };
 
+  /**
+   * Skapar ett fakturaunderlag av valda rader för en kund. Anropas inuti en transaktion.
+   * Alla rader måste gå att fakturera, annars skapas inget.
+   */
+  function createInvoice(user, customerId, ids, { invoice_date, note }) {
+    const dates = [];
+    for (const [kind, list] of Object.entries(ids)) {
+      if (!list.length) continue;
+      const found = db.prepare(INVOICABLE[kind].replace('%IDS%', placeholders(list))).all(...list, customerId);
+      if (found.length !== list.length) {
+        throw conflict('Någon rad kan inte faktureras. Den kan vara felaktigt vald, ej godkänd, avskriven, redan fakturerad eller höra till en annan kund.');
+      }
+      dates.push(...found.map((r) => r.date));
+    }
+    dates.sort();
+    const invoiceId = db
+      .prepare(
+        `INSERT INTO invoices (customer_id, period_from, period_to, note, total_amount, created_by, invoice_date)
+         VALUES (?, ?, ?, ?, 0, ?, ?)`,
+      )
+      .run(customerId, dates[0], dates.at(-1), note ?? '', user.id, invoice_date ?? today()).lastInsertRowid;
+    for (const [kind, list] of Object.entries(ids)) {
+      if (list.length) db.prepare(`UPDATE ${TABLES[kind].table} SET invoice_id = ? WHERE id IN (${placeholders(list)})`).run(invoiceId, ...list);
+    }
+    const { total } = buildLines(invoiceId);
+    db.prepare('UPDATE invoices SET total_amount = ? WHERE id = ?').run(total, invoiceId);
+    const { number } = db.prepare(`SELECT ${INVOICE_NUMBER_SQL} AS number FROM invoices inv WHERE inv.id = ?`).get(invoiceId);
+    const scope = scopeOf(ids);
+    audit(db, user, { entity: 'invoice', action: 'create', entityId: invoiceId, label: number, customerId, projectId: scope.projectId, note: `${countText(ids)}, ${total} kr${scope.more}` });
+    return { id: invoiceId, total, number };
+  }
+
   router.add('POST', '/api/invoices', { auth: 'finance' }, ({ user, body }) => {
     const customerId = reqId(body.customer_id, 'Kund');
     const ids = idLists(body);
@@ -284,40 +324,93 @@ export function registerBilling({ db, router }) {
       note: f.str({ max: 500, label: 'Anteckning' }),
     });
     if (!db.prepare('SELECT 1 FROM customers WHERE id = ?').get(customerId)) throw bad('Kunden finns inte.');
+    return tx(db, () => createInvoice(user, customerId, ids, data));
+  });
 
-    return tx(db, () => {
-      const dates = [];
-      for (const [kind, list] of Object.entries(ids)) {
-        if (!list.length) continue;
-        const found = db.prepare(INVOICABLE[kind].replace('%IDS%', placeholders(list))).all(...list, customerId);
-        if (found.length !== list.length) {
-          throw conflict('Någon rad kan inte faktureras. Den kan vara felaktigt vald, ej godkänd, avskriven, redan fakturerad eller höra till en annan kund.');
-        }
-        dates.push(...found.map((r) => r.date));
-      }
-      dates.sort();
-      const invoiceId = db
-        .prepare(
-          `INSERT INTO invoices (customer_id, period_from, period_to, note, total_amount, created_by, invoice_date)
-           VALUES (?, ?, ?, ?, 0, ?, ?)`,
-        )
-        .run(customerId, dates[0], dates.at(-1), data.note ?? '', user.id, data.invoice_date ?? today()).lastInsertRowid;
-      for (const [kind, list] of Object.entries(ids)) {
-        if (list.length) db.prepare(`UPDATE ${TABLES[kind].table} SET invoice_id = ? WHERE id IN (${placeholders(list)})`).run(invoiceId, ...list);
-      }
-      const { total } = buildLines(invoiceId);
-      db.prepare('UPDATE invoices SET total_amount = ? WHERE id = ?').run(total, invoiceId);
-      const { number } = db.prepare(`SELECT ${INVOICE_NUMBER_SQL} AS number FROM invoices inv WHERE inv.id = ?`).get(invoiceId);
-      const scope = scopeOf(ids);
-      audit(db, user, { entity: 'invoice', action: 'create', entityId: invoiceId, label: number, customerId, projectId: scope.projectId, note: `${countText(ids)}, ${total} kr${scope.more}` });
-      return { id: invoiceId, total, number };
-    });
+  // ── Månadsfakturering ─────────────────────────────────────────────────
+  // Det som kan faktureras nu: godkänt, debiterbart, på löpande räkning, varken fakturerat eller avskrivet.
+  const READY = `i.status = 'approved' AND i.billable = 1 AND i.invoice_id IS NULL AND i.waived_at IS NULL AND NOT (i.kind = 'time' AND i.billing_type <> 'hourly')`;
+  const IN_SCOPE = `i.date <= :to AND (:older = 1 OR i.date >= :from)`;
+
+  // Månaden som körs (förvalt förra månaden). Äldre ofakturerat följer med som standard, så att inget blir liggande.
+  function monthScope(input) {
+    const month = input.month || previousMonthEnd(today()).slice(0, 7);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw bad('Ange månad som ÅÅÅÅ-MM.');
+    const older = !(input.include_older === false || input.include_older === '0');
+    const from = `${month}-01`;
+    return { month, from, to: monthEnd(from), older: older ? 1 : 0, params: { from, to: monthEnd(from), older: older ? 1 : 0 } };
+  }
+
+  router.add('GET', '/api/billing/month', { auth: 'finance' }, ({ query }) => {
+    const scope = monthScope(query);
+    const rows = db
+      .prepare(
+        `${ITEMS_CTE}
+         SELECT c.id AS customer_id, c.name AS customer_name, c.ext_no,
+                COUNT(DISTINCT CASE WHEN ${READY} AND ${IN_SCOPE} THEN i.project_id END) AS projects,
+                SUM(CASE WHEN ${READY} AND ${IN_SCOPE} THEN 1 ELSE 0 END) AS ready_rows,
+                SUM(CASE WHEN ${READY} AND ${IN_SCOPE} THEN i.amount ELSE 0 END) AS ready,
+                SUM(CASE WHEN ${READY} AND :older = 1 AND i.date < :from THEN i.amount ELSE 0 END) AS older_amount,
+                SUM(CASE WHEN i.status = 'submitted' AND i.billable = 1 AND i.invoice_id IS NULL AND i.waived_at IS NULL
+                          AND NOT (i.kind = 'time' AND i.billing_type <> 'hourly') AND i.date BETWEEN :from AND :to THEN i.amount ELSE 0 END) AS waiting,
+                SUM(CASE WHEN i.kind = 'time' AND i.status = 'open' AND i.billable = 1 AND i.date BETWEEN :from AND :to THEN i.minutes ELSE 0 END) AS draft_minutes,
+                SUM(CASE WHEN i.kind = 'time' AND i.billing_type = 'fixed' AND i.status <> 'rejected' AND i.invoice_id IS NULL AND i.waived_at IS NULL
+                          AND i.date BETWEEN :from AND :to THEN i.minutes ELSE 0 END) AS fixed_minutes
+         FROM items i JOIN customers c ON c.id = i.customer_id
+         WHERE i.date <= :to
+         GROUP BY c.id
+         HAVING ready > 0 OR waiting > 0 OR draft_minutes > 0 OR fixed_minutes > 0
+         ORDER BY c.name`,
+      )
+      .all(scope.params)
+      .map((r) => ({
+        customer_id: r.customer_id,
+        customer_name: r.customer_name,
+        ext_no: r.ext_no,
+        projects: r.projects,
+        ready_rows: r.ready_rows,
+        ready: round2(r.ready),
+        older: round2(r.older_amount),
+        waiting: round2(r.waiting),
+        draft_hours: round2(r.draft_minutes / 60),
+        fixed_hours: round2(r.fixed_minutes / 60),
+      }));
+    const sum = (k) => round2(rows.reduce((s, r) => s + r[k], 0));
+    return {
+      month: scope.month,
+      from: scope.from,
+      to: scope.to,
+      include_older: !!scope.older,
+      rows,
+      totals: { ready: sum('ready'), older: sum('older'), waiting: sum('waiting'), draft_hours: sum('draft_hours'), fixed_hours: sum('fixed_hours'), customers: rows.filter((r) => r.ready > 0).length },
+    };
+  });
+
+  // Ett underlag per vald kund med allt som kan faktureras i perioden. Allt eller inget: misslyckas en kund skapas inget.
+  router.add('POST', '/api/billing/month', { auth: 'finance' }, ({ user, body }) => {
+    const scope = monthScope(body);
+    const data = parse(body, { invoice_date: f.date({ label: 'Fakturadatum' }) });
+    const raw = body.customer_ids;
+    if (!Array.isArray(raw) || !raw.length || raw.length > 1000 || !raw.every((n) => Number.isInteger(n) && n > 0)) throw bad('Välj minst en kund.');
+    const customerIds = [...new Set(raw)];
+    const itemsOf = db.prepare(`${ITEMS_CTE} SELECT i.kind, i.id FROM items i WHERE i.customer_id = :customer AND ${READY} AND ${IN_SCOPE} ORDER BY i.date`);
+    const created = tx(db, () =>
+      customerIds.map((customerId) => {
+        const customer = db.prepare('SELECT name FROM customers WHERE id = ?').get(customerId);
+        if (!customer) throw bad('En vald kund finns inte.');
+        const ids = { time: [], expense: [], mileage: [] };
+        for (const r of itemsOf.all({ ...scope.params, customer: customerId })) ids[r.kind].push(r.id);
+        if (!ids.time.length && !ids.expense.length && !ids.mileage.length) throw conflict(`${customer.name} har inget att fakturera för ${scope.month}.`);
+        return { customer_id: customerId, customer_name: customer.name, ...createInvoice(user, customerId, ids, { invoice_date: data.invoice_date, note: `Månadsfakturering ${scope.month}` }) };
+      }),
+    );
+    return { month: scope.month, created, total: round2(created.reduce((s, c) => s + c.total, 0)) };
   });
 
   const loadInvoice = (id) => {
     const inv = db
       .prepare(
-        `SELECT inv.*, ${INVOICE_NUMBER_SQL} AS number, c.name AS customer_name, u.name AS created_by_name
+        `SELECT inv.*, ${INVOICE_NUMBER_SQL} AS number, c.name AS customer_name, c.ext_no AS customer_no, u.name AS created_by_name
          FROM invoices inv JOIN customers c ON c.id = inv.customer_id LEFT JOIN users u ON u.id = inv.created_by
          WHERE inv.id = ?`,
       )
@@ -340,8 +433,12 @@ export function registerBilling({ db, router }) {
     const inv = loadInvoice(Number(params.id));
     const { lines, total } = buildLines(inv.id);
     if (query.format === 'csv') {
+      // Kundnummer, artikelnummer och projektnummer per rad, i den form fakturarader har i ekonomisystem som Fortnox.
       const columns = [
+        { key: 'customer_no', label: 'Kundnummer' },
         { key: 'kind', label: 'Typ' },
+        { key: 'article_no', label: 'Artikelnummer' },
+        { key: 'project_code', label: 'Projektnummer' },
         { key: 'project', label: 'Projekt' },
         { key: 'description', label: 'Beskrivning' },
         { key: 'quantity', label: 'Antal' },
@@ -349,7 +446,8 @@ export function registerBilling({ db, router }) {
         { key: 'rate', label: 'À-pris' },
         { key: 'amount', label: 'Belopp' },
       ];
-      sendText(res, 200, toCsv(columns, [...lines, { description: 'Summa', amount: total }]), 'text/csv; charset=utf-8', {
+      const rows = lines.map((l) => ({ ...l, customer_no: inv.customer_no }));
+      sendText(res, 200, toCsv(columns, [...rows, { description: 'Summa', amount: total }]), 'text/csv; charset=utf-8', {
         'Content-Disposition': `attachment; filename="fakturaunderlag-${inv.number}.csv"`,
       });
       return HANDLED;
