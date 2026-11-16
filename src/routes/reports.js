@@ -6,6 +6,7 @@ import { computeCommissions, summarizeEarners } from '../commission.js';
 import { ITEMS_CTE } from '../billing.js';
 import { today, addDays } from '../dates.js';
 import { submissionStatus, utilization, UTILIZATION_GROUPS } from '../oversight.js';
+import { buildOverview } from '../overview.js';
 
 const GROUPS = {
   customer: { key: 'c.id', label: 'c.name', title: 'Kund' },
@@ -295,6 +296,9 @@ export function registerReports({ db, router }) {
     }
     return { from, to, as_of: asOf, group_by: groupBy, group_title: g.title, rows, total };
   });
+
+  // Startsidan: det användaren behöver göra just nu.
+  router.add('GET', '/api/overview', {}, ({ user }) => buildOverview(db, user));
 
   /**
    * Inrapportering: vem som har rapporterat och skickat in vecka för vecka. BM ser sina konsulter,

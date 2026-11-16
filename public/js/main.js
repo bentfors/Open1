@@ -11,10 +11,12 @@ import { renderAdmin } from './views/admin.js';
 import { renderAccount } from './views/account.js';
 import { renderBilling } from './views/billing.js';
 import { renderStats } from './views/stats.js';
+import { renderOverview } from './views/overview.js';
 
 const app = document.getElementById('app');
 
 const ROUTES = {
+  oversikt: { label: 'Översikt', view: renderOverview },
   tid: { label: 'Tid', view: renderTime },
   utlagg: { label: 'Utlägg', view: renderExpenses },
   korjournal: { label: 'Körjournal', view: renderMileage },
@@ -27,11 +29,14 @@ const ROUTES = {
 };
 
 let shell = null;
+
+// Den som följer upp andra (BM, chef, ekonomi, administratör) börjar på översikten. Övriga börjar på tidrapporteringen.
+const defaultRoute = () => (state.user && (state.user.oversees || state.user.finance_level >= 1 || state.user.role === 'admin') ? 'oversikt' : 'tid');
 let pollTimer = null;
 
 function currentRoute() {
   const [, name, ...rest] = location.hash.replace(/^#/, '').split('/');
-  return { name: Object.hasOwn(ROUTES, name) ? name : 'tid', params: rest.map(decodeURIComponent) };
+  return { name: Object.hasOwn(ROUTES, name) ? name : defaultRoute(), params: rest.map(decodeURIComponent) };
 }
 
 function buildNav(active) {
@@ -59,7 +64,7 @@ function renderShell() {
     h(
       'div',
       { class: 'topbar-inner' },
-      h('a', { class: 'brand', href: '#/tid', 'aria-label': 'x-time, startsidan' }, 'x-time'),
+      h('a', { class: 'brand', href: `#/${defaultRoute()}`, 'aria-label': 'x-time, startsidan' }, 'x-time'),
       nav,
       h(
         'div',
@@ -120,7 +125,7 @@ function showForcedChange() {
 
 function start() {
   renderShell();
-  if (!location.hash) location.hash = '#/tid';
+  if (!location.hash) location.hash = `#/${defaultRoute()}`;
   route();
   refreshApprovalCount();
   clearInterval(pollTimer);
