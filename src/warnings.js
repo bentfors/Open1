@@ -40,5 +40,40 @@ export function contractWarnings(db) {
     )
     .all(now, now);
   for (const e of ending) warnings.push({ type: 'ending', user_id: null, text: `${e.name}s uppdrag hos ${e.customer} tar slut ${e.end_date} (om ${daysBetween(now, e.end_date)} dagar).` });
+
+  // Uppdragets pris ska vara det som debiteras, annars stämmer varken prognos eller provision med fakturan.
+  // Debiterat pris: medlemmens eget pris, annars projektets, annars personens standardpris (aktivitetspriser undantagna).
+  const kr = (n) => `${new Intl.NumberFormat('sv-SE').format(n)} kr/tim`;
+  const priced = db
+    .prepare(
+      `SELECT u.name, c.name AS customer, p.code, a.hourly_rate AS agreed,
+              COALESCE(pm.hourly_rate, NULLIF(p.hourly_rate, 0), u.default_bill_rate) AS billed
+       FROM assignments a
+       JOIN users u ON u.id = a.user_id
+       JOIN customers c ON c.id = a.customer_id
+       JOIN projects p ON p.id = a.project_id
+       LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = a.user_id
+       WHERE (a.end_date IS NULL OR a.end_date >= ?) AND p.billing_type = 'hourly'
+       ORDER BY u.name`,
+    )
+    .all(now);
+  for (const x of priced) {
+    if (Math.abs(x.agreed - x.billed) > 0.005) {
+      warnings.push({ type: 'rate_mismatch', user_id: null, text: `${x.name}s uppdrag hos ${x.customer} har ${kr(x.agreed)} i avtalet men debiteras ${kr(x.billed)} i projektet ${x.code}.` });
+    }
+  }
+
+  // Används kostnadsställen ska alla konsulter ha ett, annars hamnar deras TB utanför budgeten.
+  if (db.prepare('SELECT 1 FROM cost_centers WHERE active = 1 LIMIT 1').get()) {
+    for (const c of consultants) {
+      if (!db.prepare('SELECT cost_center_id FROM users WHERE id = ?').get(c.id).cost_center_id) {
+        warnings.push({ type: 'no_cost_center', user_id: c.id, text: `${c.name} saknar kostnadsställe och räknas inte in i någon KST-budget.` });
+      }
+    }
+  }
+
+  for (const s of db.prepare("SELECT id, name FROM users WHERE active = 1 AND pay_type = 'subcontractor' AND cost_rate = 0 ORDER BY name").all()) {
+    warnings.push({ type: 'no_purchase_price', user_id: s.id, text: `${s.name} är underkonsult men saknar inköpspris (timkostnad). Inköpsunderlaget och TB blir fel.` });
+  }
   return warnings;
 }

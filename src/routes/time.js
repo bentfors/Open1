@@ -166,15 +166,23 @@ export function registerTime({ db, router }) {
 
   router.add('PUT', '/api/time/entries', {}, ({ user, body }) => tx(db, () => saveEntry(user, body)));
 
+  // Administratören kan skicka in och ta tillbaka åt någon annan, till exempel när hen rapporterat åt en sjuk konsult.
+  const ownerOf = (user, body) => {
+    const id = body.user_id === undefined || body.user_id === null ? user.id : reqId(body.user_id, 'Användare');
+    if (id !== user.id && !isAdmin(user)) throw forbidden();
+    return id;
+  };
+
   router.add('POST', '/api/time/submit', {}, ({ user, body }) => {
     assertMonday(body.week_start);
+    const ownerId = ownerOf(user, body);
     const days = weekDays(body.week_start);
     const info = db
       .prepare(
         `UPDATE time_entries SET status = 'submitted', reject_note = NULL, updated_at = datetime('now')
          WHERE user_id = ? AND work_date BETWEEN ? AND ? AND status IN ('open','rejected')`,
       )
-      .run(user.id, days[0], days[6]);
+      .run(ownerId, days[0], days[6]);
     if (!info.changes) throw bad('Det finns ingen tid att skicka in för veckan.');
     return { submitted: info.changes };
   });
@@ -187,7 +195,7 @@ export function registerTime({ db, router }) {
         `UPDATE time_entries SET status = 'open', updated_at = datetime('now')
          WHERE user_id = ? AND work_date BETWEEN ? AND ? AND status = 'submitted'`,
       )
-      .run(user.id, days[0], days[6]);
+      .run(ownerOf(user, body), days[0], days[6]);
     if (!info.changes) throw bad('Det finns inget inskickat att ta tillbaka. Godkänd tid kan inte tas tillbaka.');
     return { recalled: info.changes };
   });

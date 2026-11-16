@@ -1,0 +1,2 @@
+# Windows-filerna behöver CRLF för att cmd ska läsa dem rätt.
+*.cmd text eol=crlf

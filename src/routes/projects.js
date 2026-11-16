@@ -1,5 +1,6 @@
-import { bad, conflict, notFound } from '../http.js';
-import { f, parse } from '../validate.js';
+import { bad, conflict, forbidden, notFound } from '../http.js';
+import { f, parse, reqId } from '../validate.js';
+import { isAdmin } from '../domain.js';
 import { insertRow, updateRow, tx } from '../db.js';
 import { today } from '../dates.js';
 import { audit, changesFor } from '../audit.js';
@@ -214,7 +215,10 @@ export function registerProjects({ db, router }) {
   });
 
   // Det en användare får rapportera på: aktiva aktiviteter i projekt där hen är medlem eller som är öppna för alla.
-  router.add('GET', '/api/my/targets', {}, ({ user }) => {
+  // Administratören kan hämta en annan persons aktiviteter för att rapportera åt hen.
+  router.add('GET', '/api/my/targets', {}, ({ user, query }) => {
+    const forId = query.user_id ? reqId(query.user_id, 'Användare') : user.id;
+    if (forId !== user.id && !isAdmin(user)) throw forbidden();
     const date = today();
     const activities = db
       .prepare(
@@ -229,7 +233,7 @@ export function registerProjects({ db, router }) {
            AND (p.end_date IS NULL OR p.end_date >= ?)
          ORDER BY c.name, p.code, a.name`,
       )
-      .all(user.id, date);
+      .all(forId, date);
     const absences = db.prepare('SELECT id, name FROM absence_types WHERE active = 1 ORDER BY name').all();
     return { activities, absences };
   });

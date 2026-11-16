@@ -310,6 +310,7 @@ table.data th.sortable { padding: 0; }
 
 /* ── Veckovy ────────────────────────────────────────────────────────── */
 .week-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.week-head select { width: auto; min-width: 12rem; }
 .week-title { font-size: 1.3rem; font-weight: 300; color: var(--text); min-width: 15rem; letter-spacing: -0.01em; }
 table.grid { width: 100%; border-collapse: collapse; min-width: 760px; }
 table.grid th, table.grid td { padding: 0.4rem 0.4rem; border-bottom: 1px solid var(--border); text-align: center; }

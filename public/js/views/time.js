@@ -1,4 +1,4 @@
-import { get, put, post } from '../api.js';
+import { get, put, post, qs } from '../api.js';
 import { h, fmtHours, parseHours, fmtShort, fmtDow, fmtDate, addDays, isoWeek, isWeekend, toast, openDialog, add, setKids } from '../dom.js';
 import { state, isAdmin, refreshApprovalCount } from '../state.js';
 
@@ -36,7 +36,14 @@ const rowOfEntry = (e) =>
 
 export async function renderTime(root, params) {
   const requested = /^\d{4}-\d{2}-\d{2}$/.test(params[0] || '') ? params[0] : '';
-  const [targets, first] = await Promise.all([get('/api/my/targets'), get(`/api/time/week${requested ? `?start=${requested}` : ''}`)]);
+  // Administratören kan rapportera åt någon annan: #/tid/<vecka>/<användar-id>.
+  const forId = isAdmin() && /^\d+$/.test(String(params[1] ?? '')) && Number(params[1]) !== state.user.id ? Number(params[1]) : null;
+  const asUser = forId ? { user_id: forId } : {};
+  const [targets, first, people] = await Promise.all([
+    get(`/api/my/targets${qs(asUser)}`),
+    get(`/api/time/week${qs({ start: requested || undefined, ...asUser })}`),
+    isAdmin() ? get('/api/people') : [],
+  ]);
   const data = first;
   setKids(root, );
   // Normtiden kommer från servern och räknar bort helgdagar och dagar utanför anställningen.
@@ -128,7 +135,7 @@ export async function renderTime(root, params) {
   }
 
   async function saveEntry(row, date, minutes, note) {
-    const body = { date, minutes, ...(row.kind === 'activity' ? { activity_id: row.activity_id } : { absence_type_id: row.absence_type_id }) };
+    const body = { date, minutes, ...asUser, ...(row.kind === 'activity' ? { activity_id: row.activity_id } : { absence_type_id: row.absence_type_id }) };
     if (note !== undefined) body.note = note;
     const res = await put('/api/time/entries', body);
     const k = `${row.key}|${date}`;
@@ -273,7 +280,7 @@ export async function renderTime(root, params) {
       class: 'btn',
       type: 'button',
       onclick: async () => {
-        const prev = await get(`/api/time/week?start=${addDays(data.week_start, -7)}`);
+        const prev = await get(`/api/time/week${qs({ start: addDays(data.week_start, -7), ...asUser })}`);
         let added = 0;
         for (const e of prev.entries) {
           const row = rowOfEntry(e);
@@ -294,10 +301,10 @@ export async function renderTime(root, params) {
   submitBtn.addEventListener('click', async () => {
     submitBtn.disabled = true;
     try {
-      const r = await post('/api/time/submit', { week_start: data.week_start });
+      const r = await post('/api/time/submit', { week_start: data.week_start, ...asUser });
       toast(`${r.submitted} rader inskickade för attest.`, 'ok');
       refreshApprovalCount();
-      await renderTime(root, [data.week_start]);
+      await renderTime(root, [data.week_start, forId]);
     } catch (err) {
       toast(err.message, 'error');
       submitBtn.disabled = false;
@@ -305,9 +312,9 @@ export async function renderTime(root, params) {
   });
   recallBtn.addEventListener('click', async () => {
     try {
-      await post('/api/time/recall', { week_start: data.week_start });
+      await post('/api/time/recall', { week_start: data.week_start, ...asUser });
       refreshApprovalCount();
-      await renderTime(root, [data.week_start]);
+      await renderTime(root, [data.week_start, forId]);
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -317,6 +324,22 @@ export async function renderTime(root, params) {
     location.hash = to;
   };
   const isCurrentWeek = data.days.includes(data.today);
+  const suffix = forId ? `/${forId}` : '';
+  const todayMonday = addDays(data.today, -((new Date(`${data.today}T00:00:00Z`).getUTCDay() + 6) % 7));
+  const who = isAdmin()
+    ? h(
+        'select',
+        {
+          id: 'who',
+          'aria-label': 'Rapportera som',
+          onchange: (e) => {
+            const id = Number(e.target.value);
+            location.hash = id === state.user.id ? `#/tid/${data.week_start}` : `#/tid/${data.week_start}/${id}`;
+          },
+        },
+        people.filter((p) => p.active || p.id === forId).map((p) => h('option', { value: p.id, selected: p.id === (forId ?? state.user.id) }, p.name)),
+      )
+    : null;
   weekLabel.textContent = `Vecka ${isoWeek(data.week_start)} · ${fmtShort(data.days[0])} – ${fmtDate(data.days[6])}`;
 
   const head = h(
@@ -351,13 +374,15 @@ export async function renderTime(root, params) {
     h(
       'div',
       { class: 'week-head' },
-      h('button', { class: 'btn', type: 'button', 'aria-label': 'Föregående vecka', onclick: nav(`#/tid/${addDays(data.week_start, -7)}`) }, '◀'),
+      h('button', { class: 'btn', type: 'button', 'aria-label': 'Föregående vecka', onclick: nav(`#/tid/${addDays(data.week_start, -7)}${suffix}`) }, '◀'),
       weekLabel,
-      h('button', { class: 'btn', type: 'button', 'aria-label': 'Nästa vecka', onclick: nav(`#/tid/${addDays(data.week_start, 7)}`) }, '▶'),
-      h('button', { class: 'btn', type: 'button', disabled: isCurrentWeek, onclick: nav('#/tid') }, 'Idag'),
+      h('button', { class: 'btn', type: 'button', 'aria-label': 'Nästa vecka', onclick: nav(`#/tid/${addDays(data.week_start, 7)}${suffix}`) }, '▶'),
+      h('button', { class: 'btn', type: 'button', disabled: isCurrentWeek, onclick: nav(forId ? `#/tid/${todayMonday}${suffix}` : '#/tid') }, 'Idag'),
+      who,
       h('span', { class: 'spacer' }),
       statusBox,
     ),
+    forId ? h('div', { class: 'alert warn' }, `Du rapporterar åt ${data.user.name}. Det du ändrar syns i ändringsloggen.`) : null,
     h(
       'div',
       { class: 'card flush' },
